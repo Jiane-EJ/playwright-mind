@@ -170,6 +170,68 @@ function buildCascaderInputCandidates(
   ];
 }
 
+async function getActiveDialogLocator(
+  task: AcceptanceTask,
+  page: Page,
+): Promise<Locator | null> {
+  const containers = page.locator(
+    'div[role="dialog"], .el-dialog__wrapper, .el-dialog, .ant-modal-wrap, .ant-modal, .ivu-modal-wrap, .ivu-modal',
+  );
+  const count = await containers.count();
+  if (count <= 0) {
+    return null;
+  }
+  const dialogTitle = task.form.dialogTitle;
+  const normalizedTitle = dialogTitle ? normalizeText(dialogTitle) : '';
+  for (let i = 0; i < count; i += 1) {
+    const item = containers.nth(i);
+    if (!(await item.isVisible())) {
+      continue;
+    }
+    if (!normalizedTitle) {
+      return item;
+    }
+    const text = normalizeText((await item.innerText()) || '');
+    if (text.includes(normalizedTitle)) {
+      return item;
+    }
+  }
+  return null;
+}
+
+async function fillByCandidates(
+  root: Locator,
+  candidates: string[],
+  value: string,
+): Promise<boolean> {
+  for (let i = 0; i < candidates.length; i += 1) {
+    const candidate = candidates[i].trim();
+    if (!candidate) {
+      continue;
+    }
+    const byPlaceholder = root.locator(
+      `input[placeholder*="${candidate}"], textarea[placeholder*="${candidate}"]`,
+    );
+    if (await tryFillLocator(byPlaceholder, value)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function extractHintCandidates(field: TaskField): string[] {
+  const hints = field.hints || [];
+  const values: string[] = [];
+  for (let i = 0; i < hints.length; i += 1) {
+    const hint = hints[i];
+    const match = hint.match(/占位文案为\s*([^\s，。；]+)/);
+    if (match && match[1]) {
+      values.push(match[1].trim());
+    }
+  }
+  return uniqueNonEmpty(values);
+}
+
 async function readInputDisplayValue(locator: Locator): Promise<string> {
   try {
     const value = await locator.inputValue();
@@ -216,17 +278,19 @@ function matchCascaderPath(actualValue: string, levels: string[]): boolean {
   return normalizedActualNoSlash.includes(normalizedExpectedNoSlash);
 }
 
-async function collectValidationMessages(page: Page): Promise<string[]> {
+async function collectValidationMessages(
+  page: Page,
+  scope?: Locator,
+): Promise<string[]> {
+  const root = scope || page.locator('body');
   const selectors = [
     '.el-form-item__error',
     '.ant-form-item-explain-error',
     '.ivu-form-item-error-tip',
-    '.is-error .el-input__inner',
-    '.is-error textarea',
   ];
   const messages: string[] = [];
   for (let i = 0; i < selectors.length; i += 1) {
-    const locator = page.locator(selectors[i]);
+    const locator = root.locator(selectors[i]);
     const count = await locator.count();
     for (let j = 0; j < count; j += 1) {
       const item = locator.nth(j);
@@ -286,25 +350,8 @@ function resolveFieldsByValidationMessages(
 }
 
 async function isDialogVisible(task: AcceptanceTask, page: Page): Promise<boolean> {
-  if (task.form.dialogTitle) {
-    const titleLocator = page.getByText(task.form.dialogTitle, { exact: false });
-    const count = await titleLocator.count();
-    for (let i = 0; i < count; i += 1) {
-      if (await titleLocator.nth(i).isVisible()) {
-        return true;
-      }
-    }
-  }
-  const submitButton = page.getByRole('button', {
-    name: new RegExp(escapeRegExp(task.form.submitButtonText)),
-  });
-  const count = await submitButton.count();
-  for (let i = 0; i < count; i += 1) {
-    if (await submitButton.nth(i).isVisible()) {
-      return true;
-    }
-  }
-  return false;
+  const dialog = await getActiveDialogLocator(task, page);
+  return dialog !== null;
 }
 
 async function tryClickLocator(
@@ -318,6 +365,26 @@ async function tryClickLocator(
         continue;
       }
       await item.click({ timeout: 5000 });
+      return true;
+    }
+  } catch (_error) {
+    return false;
+  }
+  return false;
+}
+
+async function tryFillLocator(
+  locator: Locator,
+  value: string,
+): Promise<boolean> {
+  try {
+    const count = await locator.count();
+    for (let i = 0; i < count; i += 1) {
+      const item = locator.nth(i);
+      if (!(await item.isVisible())) {
+        continue;
+      }
+      await item.fill(value, { timeout: 5000 });
       return true;
     }
   } catch (_error) {
@@ -579,6 +646,27 @@ async function fillField(
     );
   }
   const fieldValue = toDisplayValue(field.value);
+  const dialog = await getActiveDialogLocator(task, runner.page);
+  const normalizedLabel = normalizeLabel(field.label);
+  const labelCandidates = uniqueNonEmpty([
+    normalizedLabel,
+    field.label,
+    ...extractHintCandidates(field),
+  ]);
+  if (dialog) {
+    const byRole = dialog.getByRole('textbox', {
+      name: new RegExp(escapeRegExp(normalizedLabel)),
+    });
+    if (await tryFillLocator(byRole, fieldValue)) {
+      return;
+    }
+    if (await fillByCandidates(dialog, labelCandidates, fieldValue)) {
+      return;
+    }
+  }
+  if (await fillByCandidates(runner.page.locator('body'), labelCandidates, fieldValue)) {
+    return;
+  }
   const componentTips =
     field.componentType === 'textarea'
       ? '这是多行文本输入框。'
@@ -611,7 +699,8 @@ async function submitFormWithAutoFix(
       return;
     }
 
-    const messages = await collectValidationMessages(runner.page);
+    const dialog = await getActiveDialogLocator(task, runner.page);
+    const messages = await collectValidationMessages(runner.page, dialog || undefined);
     const fieldsToFix = resolveFieldsByValidationMessages(task.form.fields, messages);
 
     if (fieldsToFix.length > 0) {
@@ -621,18 +710,14 @@ async function submitFormWithAutoFix(
       }
       continue;
     }
-
-    const hintText = messages.length ? `当前校验提示：${messages.join('；')}` : '';
-    await runner.ai(
-      `点击“${task.form.submitButtonText}”后仍在新增弹窗。请根据红色校验提示修正字段并再次提交。${hintText}`,
-    );
-    await runner.page.waitForTimeout(1000);
-    const reopened = await isDialogVisible(task, runner.page);
-    if (!reopened) {
+    await runner.page.waitForTimeout(1200);
+    const stillOpened = await isDialogVisible(task, runner.page);
+    if (!stillOpened) {
       return;
     }
   }
-  const finalMessages = await collectValidationMessages(runner.page);
+  const dialog = await getActiveDialogLocator(task, runner.page);
+  const finalMessages = await collectValidationMessages(runner.page, dialog || undefined);
   throw new Error(
     `提交失败：已重试${maxAttempts}次，弹窗仍未关闭。校验提示=${finalMessages.join('；') || '无明显提示'}`,
   );
