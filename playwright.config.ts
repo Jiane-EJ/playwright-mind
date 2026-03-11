@@ -1,5 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
 import dotenv from 'dotenv';
+import {
+  playwrightHtmlReportDir,
+  playwrightOutputDir,
+} from './config/runtime-path';
 
 // loading .env file
 dotenv.config();
@@ -17,6 +21,7 @@ dotenv.config();
  */
 export default defineConfig({
   testDir: './tests',
+  outputDir: playwrightOutputDir,
   /*timeout */
   timeout: 90 * 1000,
   /* Run tests in files in parallel */
@@ -28,7 +33,11 @@ export default defineConfig({
   /* Opt out of parallel tests on CI. */
   workers: process.env.CI ? 1 : undefined,
   /* Reporter to use. See https://playwright.dev/docs/test-reporters */
-  reporter: [["list"], ["@midscene/web/playwright-report"]],
+  reporter: [
+    ['list'],
+    ['html', { open: 'never', outputFolder: playwrightHtmlReportDir }],
+    ['@midscene/web/playwright-report'],
+  ],
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
     /* Base URL to use in actions like `await page.goto('/')`. */

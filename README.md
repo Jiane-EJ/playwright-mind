@@ -1,17 +1,15 @@
 # playwright-mind
 
-> 基于`playwright`和`midscene.js`自动化测试项目，给`Playwright`插上AI的翅膀，目前可以落地的AI自动化测试项目。
+> 基于 `Playwright` 和 `Midscene.js` 的 AI 自动化测试项目。
 
-__技术栈：__
+## 技术栈
 
-* [plywright](https://github.com/microsoft/playwright) Web UI自动化测试工具。
-
-* [midscene.js](https://github.com/web-infra-dev/midscene) 提供AI定位断言能力。
-
+* [Playwright](https://github.com/microsoft/playwright) Web UI 自动化测试工具
+* [Midscene.js](https://github.com/web-infra-dev/midscene) AI 定位、提取、断言能力
 
 ## 安装与配置
 
-1. 克隆项目到本地：
+1. 克隆项目
 
 ```shell
 git clone https://github.com/autotestclass/playwright-mind
@@ -24,86 +22,92 @@ cd playwright-mind
 npm install
 ```
 
-3. 安装运行浏览器
+3. 安装浏览器
 
 ```shell
 npx playwright install
 ```
 
-4. 配置大模型
+4. 配置 `.env`
 
-> 本项目默认使用 `qwen-vl-max-latest` 模型, 经过验证可用，关键是免费。如果想其他模型请参考midscenejs官方配置。
+> 默认模型可按实际需要替换，其他模型接入方式参考 Midscene 官方文档。
 
 阿里云百练：https://bailian.console.aliyun.com/
 
-使用其他模型：https://midscenejs.com/zh/model-provider.html
+模型接入文档：https://midscenejs.com/zh/model-provider.html
 
-在 `.env` 文件中配置环境变量：
-
-```ts
-export OPENAI_API_KEY="sk-your-key"
-export OPENAI_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
-export MIDSCENE_MODEL_NAME="qwen-vl-max-latest"
+```dotenv
+OPENAI_API_KEY=sk-your-key
+OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+MIDSCENE_MODEL_NAME=qwen3-vl-plus
+RUNTIME_DIR_PREFIX=t_
+PLAYWRIGHT_OUTPUT_DIR=t_test-results
+PLAYWRIGHT_HTML_REPORT_DIR=t_playwright-report
+MIDSCENE_RUN_DIR=t_midscene_run
 ```
+
+## 运行产物目录
+
+所有运行过程中自动生成的目录统一由 `.env` 管理，默认全部以 `t_` 开头：
+
+* `PLAYWRIGHT_OUTPUT_DIR`：Playwright 执行产物目录
+* `PLAYWRIGHT_HTML_REPORT_DIR`：Playwright HTML 报告目录
+* `MIDSCENE_RUN_DIR`：Midscene 运行日志、缓存、报告根目录
+
+默认生成结果如下：
+
+* `t_test-results/`
+* `t_playwright-report/`
+* `t_midscene_run/report`
+* `t_midscene_run/dump`
+* `t_midscene_run/tmp`
+* `t_midscene_run/cache`
 
 ## 使用示例
 
-在项目的`test`目录，附带了`bing-search-ai-example.spec.ts`例子。
-
-__示例代码__
+`tests` 目录中包含 `bing-search-ai-example.spec.ts` 示例。
 
 ```ts
-import { expect } from "@playwright/test";
-import { test } from "./fixture/fixture";
+import { expect } from '@playwright/test';
+import { test } from './fixture/fixture';
 
 test.beforeEach(async ({ page }) => {
-  await page.goto("https://cn.bing.com");
+  await page.goto('https://cn.bing.com');
 });
 
 test('search keyword on bing', async ({ page, ai, aiQuery, aiAssert }) => {
-  // 👀 输入关键字，执行搜索
   await ai('搜索输入框输入"playwright"关键字，并回车');
   await page.waitForTimeout(3000);
 
-  // 👀 找到列表里耳机相关的信息
   const items = await aiQuery(
     'string[], 搜索结果列表中包含"playwright"相关的标题'
   );
 
-  console.log("search result", items);
-  console.log("search result number", items?.length);
-  // 断言大于 1 条搜索结果
-  expect(items?.length).toBeGreaterThan(1);
+  console.log('search result', items);
+  console.log('search result number', items?.length);
 
-  // 👀 用 AI 断言
+  expect(items?.length).toBeGreaterThan(1);
   await aiAssert('检查搜索结果列表第一条标题是否包含"playwright"字符串');
 });
 ```
 
-三种关键方法：交互（.ai, .aiAction）, 提取 (.aiQuery), 断言 (.aiAssert)。
+关键方法说明：
 
-* `.ai`方法描述步骤并执行交互
-* `.aiQuery` 从 UI 中“理解”并提取数据，返回值是 JSON 格式，你可以尽情描述想要的数据结构
-* `.aiAssert` 来执行断言
+* `.ai`：描述步骤并执行交互
+* `.aiQuery`：从页面中提取结构化数据
+* `.aiAssert`：执行 AI 断言
 
-__运行测试__
+## 运行测试
 
 ```shell
 npx playwright test --headed tests/bing-search-ai-example.spec.ts
-
-Running 1 test using 1 worker
-
-  ✓  1 [chromium] › baidu-search-ai-example.spec.ts:9:5 › search headphone on bing (52.1s)
-search result [ 'Playwright 中文网', '快速入门Playwright框架：从零到自动化测试的第一 ...' ]
-search result number 2
-Midscene - report file updated: /Users/fnngj/zhpro/github/playwright-mind/midscene_run/report/playwright-merged-2025-01-10_00-44-50-464.html
-
-  Slow test file: [chromium] › baidu-search-ai-example.spec.ts (52.1s)
-  Consider splitting slow test files to speed up parallel execution
-  1 passed (55.3s)
-Midscene - report file updated: /Users/fnngj/zhpro/github/playwright-mind/midscene_run/report/playwright-merged-2025-01-10_00-44-50-464.html
 ```
 
-__测试报告__
+执行完成后，可查看：
+
+* Playwright HTML 报告目录：`t_playwright-report/`
+* Midscene 报告目录：`t_midscene_run/report/`
+
+## 测试报告
 
 ![](./images/midscene-report.png)
