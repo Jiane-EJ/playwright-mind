@@ -39,9 +39,9 @@
 
 ## 自动生成目录规范
 
-* Playwright 执行产物目录默认使用 `t_test-results`
-* Playwright HTML 报告目录默认使用 `t_playwright-report`
-* Midscene 运行根目录默认使用 `t_midscene_run`
+* Playwright 执行产物目录默认使用 `t_runtime/test-results`
+* Playwright HTML 报告目录默认使用 `t_runtime/playwright-report`
+* Midscene 运行根目录默认使用 `t_runtime/midscene_run`
 * 新增自动生成目录时，必须接入 `.env`，并保持 `t_` 前缀规则
 * `.gitignore`、CI 路径、README 说明必须同步更新
 

@@ -9,10 +9,11 @@ jobs:
     timeout-minutes: 60
     runs-on: ubuntu-latest
     env:
-      RUNTIME_DIR_PREFIX: t_
-      PLAYWRIGHT_OUTPUT_DIR: t_test-results
-      PLAYWRIGHT_HTML_REPORT_DIR: t_playwright-report
-      MIDSCENE_RUN_DIR: t_midscene_run
+      RUNTIME_DIR_PREFIX: t_runtime/
+      PLAYWRIGHT_OUTPUT_DIR: t_runtime/test-results
+      PLAYWRIGHT_HTML_REPORT_DIR: t_runtime/playwright-report
+      MIDSCENE_RUN_DIR: t_runtime/midscene_run
+      ACCEPTANCE_RESULT_DIR: t_runtime/acceptance-results
     steps:
     - uses: actions/checkout@v4
     - uses: actions/setup-node@v4

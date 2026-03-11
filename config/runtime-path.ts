@@ -3,7 +3,7 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const DEFAULT_RUNTIME_DIR_PREFIX = 't_';
+const DEFAULT_RUNTIME_DIR_PREFIX = 't_runtime/';
 
 function readEnv(name: string, fallbackValue: string): string {
   const value = process.env[name]?.trim();
