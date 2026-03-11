@@ -129,10 +129,6 @@ npm run stage2:run:headed
 * 第二段过程快照：`t_acceptance-results/<taskId>/<timestamp>/result.partial.json`
 * 第二段步骤截图：`t_acceptance-results/<taskId>/<timestamp>/screenshots/`
 
-## 测试报告
-
-![](./images/midscene-report.png)
-
 ## 当前状态
 
 | 模块 | 状态 | 说明 |
