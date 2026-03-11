@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import type { PlayWrightAiFixtureType } from '@midscene/web/playwright';
 import { acceptanceResultDir, resolveRuntimePath } from '../../config/runtime-path';
 import { loadTask, resolveTaskFilePath } from './task-loader';
@@ -23,6 +23,10 @@ type RunnerContext = AiContext & {
 
 type RunnerOptions = {
   rawTaskFilePath?: string;
+};
+
+type RunStepOptions = {
+  required?: boolean;
 };
 
 function toDisplayValue(value: string | string[]): string {
@@ -67,15 +71,6 @@ function withPageTimeout(runtimeTimeoutMs: number | undefined): {
   return { timeout: runtimeTimeoutMs };
 }
 
-function withWaitForTimeout(runtimeTimeoutMs: number | undefined): {
-  timeoutMs: number;
-} | undefined {
-  if (!runtimeTimeoutMs || runtimeTimeoutMs <= 0) {
-    return undefined;
-  }
-  return { timeoutMs: runtimeTimeoutMs };
-}
-
 function resolveFieldValues(task: AcceptanceTask): Record<string, string> {
   const result: Record<string, string> = {};
   task.form.fields.forEach((field) => {
@@ -84,18 +79,504 @@ function resolveFieldValues(task: AcceptanceTask): Record<string, string> {
   return result;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalizeLabel(label: string): string {
+  return label.replace(/\*/g, '').trim();
+}
+
+function uniqueNonEmpty(values: string[]): string[] {
+  const filtered = values
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  return [...new Set(filtered)];
+}
+
+function normalizeText(value: string): string {
+  return value.replace(/\s+/g, '').trim();
+}
+
+function isFieldValueEmpty(field: TaskField): boolean {
+  if (Array.isArray(field.value)) {
+    return field.value.length === 0;
+  }
+  return String(field.value).trim().length === 0;
+}
+
+async function pickFirstVisibleLocator(
+  candidates: Locator[],
+): Promise<Locator | null> {
+  for (let i = 0; i < candidates.length; i += 1) {
+    const locator = candidates[i];
+    try {
+      const count = await locator.count();
+      for (let j = 0; j < count; j += 1) {
+        const item = locator.nth(j);
+        if (await item.isVisible()) {
+          return item;
+        }
+      }
+    } catch (_error) {
+      // ignore
+    }
+  }
+  return null;
+}
+
+async function getVisibleNth(
+  locator: Locator,
+  visibleIndex: number,
+): Promise<Locator | null> {
+  try {
+    const count = await locator.count();
+    let currentVisible = 0;
+    for (let i = 0; i < count; i += 1) {
+      const item = locator.nth(i);
+      if (await item.isVisible()) {
+        if (currentVisible === visibleIndex) {
+          return item;
+        }
+        currentVisible += 1;
+      }
+    }
+  } catch (_error) {
+    // ignore
+  }
+  return null;
+}
+
+function buildCascaderInputCandidates(
+  fieldLabel: string,
+  task: AcceptanceTask,
+  page: Page,
+): Locator[] {
+  const normalized = normalizeLabel(fieldLabel);
+  const escaped = escapeRegExp(normalized);
+  const dialogText = task.form.dialogTitle || task.form.openButtonText;
+  const dialog = page
+    .locator('div[role="dialog"], .el-dialog, .ant-modal, .ivu-modal')
+    .filter({ hasText: dialogText })
+    .first();
+  return [
+    page.getByRole('textbox', { name: new RegExp(escaped) }),
+    dialog.locator(
+      'input[placeholder*="省市区"], input[placeholder*="请选择省市区"], input[readonly], .el-cascader input, .ant-cascader-input, .ivu-cascader input',
+    ),
+    page.locator(
+      'input[placeholder*="省市区"], input[placeholder*="请选择省市区"], .el-cascader input, .ant-cascader-input, .ivu-cascader input',
+    ),
+  ];
+}
+
+async function readInputDisplayValue(locator: Locator): Promise<string> {
+  try {
+    const value = await locator.inputValue();
+    if (value.trim().length > 0) {
+      return value.trim();
+    }
+  } catch (_error) {
+    // ignore
+  }
+  try {
+    const valueAttr = await locator.getAttribute('value');
+    if (valueAttr && valueAttr.trim().length > 0) {
+      return valueAttr.trim();
+    }
+  } catch (_error) {
+    // ignore
+  }
+  return '';
+}
+
+async function readCascaderDisplayValue(
+  fieldLabel: string,
+  task: AcceptanceTask,
+  page: Page,
+): Promise<string> {
+  const input = await pickFirstVisibleLocator(
+    buildCascaderInputCandidates(fieldLabel, task, page),
+  );
+  if (!input) {
+    return '';
+  }
+  return readInputDisplayValue(input);
+}
+
+function matchCascaderPath(actualValue: string, levels: string[]): boolean {
+  const normalizedActual = normalizeText(actualValue);
+  const expectedPath = levels.join('/');
+  const normalizedExpected = normalizeText(expectedPath);
+  if (normalizedActual.includes(normalizedExpected)) {
+    return true;
+  }
+  const normalizedActualNoSlash = normalizedActual.replace(/\//g, '');
+  const normalizedExpectedNoSlash = normalizedExpected.replace(/\//g, '');
+  return normalizedActualNoSlash.includes(normalizedExpectedNoSlash);
+}
+
+async function collectValidationMessages(page: Page): Promise<string[]> {
+  const selectors = [
+    '.el-form-item__error',
+    '.ant-form-item-explain-error',
+    '.ivu-form-item-error-tip',
+    '.is-error .el-input__inner',
+    '.is-error textarea',
+  ];
+  const messages: string[] = [];
+  for (let i = 0; i < selectors.length; i += 1) {
+    const locator = page.locator(selectors[i]);
+    const count = await locator.count();
+    for (let j = 0; j < count; j += 1) {
+      const item = locator.nth(j);
+      if (!(await item.isVisible())) {
+        continue;
+      }
+      let text = (await item.innerText()).trim();
+      if (!text) {
+        text = (await item.getAttribute('placeholder'))?.trim() || '';
+      }
+      if (text) {
+        messages.push(text);
+      }
+    }
+  }
+  return uniqueNonEmpty(messages);
+}
+
+function resolveFieldsByValidationMessages(
+  fields: TaskField[],
+  messages: string[],
+): TaskField[] {
+  if (!messages.length) {
+    return [];
+  }
+  const normalizedMessages = messages.map((item) => normalizeText(item));
+  const result: TaskField[] = [];
+  for (let i = 0; i < fields.length; i += 1) {
+    const field = fields[i];
+    if (isFieldValueEmpty(field)) {
+      continue;
+    }
+    const label = normalizeText(normalizeLabel(field.label));
+    const matched = normalizedMessages.some((message) => {
+      if (label && message.includes(label)) {
+        return true;
+      }
+      if (
+        field.componentType === 'cascader' &&
+        (message.includes('省市区') || message.includes('请选择'))
+      ) {
+        return true;
+      }
+      if (label && message.includes(`请输入${label}`)) {
+        return true;
+      }
+      if (label && message.includes(`请选择${label}`)) {
+        return true;
+      }
+      return false;
+    });
+    if (matched) {
+      result.push(field);
+    }
+  }
+  return result;
+}
+
+async function isDialogVisible(task: AcceptanceTask, page: Page): Promise<boolean> {
+  if (task.form.dialogTitle) {
+    const titleLocator = page.getByText(task.form.dialogTitle, { exact: false });
+    const count = await titleLocator.count();
+    for (let i = 0; i < count; i += 1) {
+      if (await titleLocator.nth(i).isVisible()) {
+        return true;
+      }
+    }
+  }
+  const submitButton = page.getByRole('button', {
+    name: new RegExp(escapeRegExp(task.form.submitButtonText)),
+  });
+  const count = await submitButton.count();
+  for (let i = 0; i < count; i += 1) {
+    if (await submitButton.nth(i).isVisible()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function tryClickLocator(
+  locator: ReturnType<Page['locator']>,
+): Promise<boolean> {
+  try {
+    const count = await locator.count();
+    for (let i = 0; i < count; i += 1) {
+      const item = locator.nth(i);
+      if (!(await item.isVisible())) {
+        continue;
+      }
+      await item.click({ timeout: 5000 });
+      return true;
+    }
+  } catch (_error) {
+    return false;
+  }
+  return false;
+}
+
+async function waitVisibleByText(
+  page: Page,
+  text: string,
+  timeoutMs: number,
+): Promise<boolean> {
+  try {
+    await page.getByText(text, { exact: false }).first().waitFor({
+      state: 'visible',
+      timeout: timeoutMs,
+    });
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+async function openCascaderPanel(
+  fieldLabel: string,
+  task: AcceptanceTask,
+  runner: RunnerContext,
+): Promise<void> {
+  const input = await pickFirstVisibleLocator(
+    buildCascaderInputCandidates(fieldLabel, task, runner.page),
+  );
+  if (input) {
+    await input.click({ timeout: 5000 });
+    return;
+  }
+  const normalized = normalizeLabel(fieldLabel);
+  await runner.ai(
+    `在弹窗“${task.form.dialogTitle || task.form.openButtonText}”中，点击字段“${normalized}”打开级联下拉。`,
+  );
+}
+
+async function clickCascaderOption(
+  optionName: string,
+  levelIndex: number,
+  runner: RunnerContext,
+): Promise<void> {
+  const panelSelectors = [
+    '.el-cascader-panel .el-cascader-menu',
+    '.el-cascader-menus .el-cascader-menu',
+    '.el-cascader-menu',
+    '.ant-cascader-menus .ant-cascader-menu',
+    '.ant-cascader-menu',
+    '.ivu-cascader-menu',
+  ];
+  for (let i = 0; i < panelSelectors.length; i += 1) {
+    const panels = runner.page.locator(panelSelectors[i]);
+    const panel = await getVisibleNth(panels, levelIndex);
+    if (!panel) {
+      continue;
+    }
+    const byExactText = await tryClickLocator(
+      panel.getByText(optionName, { exact: true }),
+    );
+    if (byExactText) {
+      return;
+    }
+    const byNode = await tryClickLocator(
+      panel
+        .locator('[role="menuitem"], .el-cascader-node, li, span, div')
+        .filter({ hasText: optionName }),
+    );
+    if (byNode) {
+      return;
+    }
+  }
+
+  const roleMenus = runner.page.locator('[role="menu"]');
+  const roleMenu = await getVisibleNth(roleMenus, levelIndex);
+  if (roleMenu) {
+    const byRoleMenuText = await tryClickLocator(
+      roleMenu.getByText(optionName, { exact: true }),
+    );
+    if (byRoleMenuText) {
+      return;
+    }
+  }
+
+  const escaped = escapeRegExp(optionName);
+  const byMenuItem = await tryClickLocator(
+    runner.page.getByRole('menuitem', {
+      name: new RegExp(`^\\s*${escaped}\\s*$`),
+    }),
+  );
+  if (byMenuItem) {
+    return;
+  }
+  const byMenuItemText = await tryClickLocator(
+    runner.page.locator('[role="menuitem"]').filter({ hasText: optionName }),
+  );
+  if (byMenuItemText) {
+    return;
+  }
+  await runner.ai(`在省市区级联面板中点击“${optionName}”`);
+}
+
+async function clickButtonWithCandidates(
+  labels: string[],
+  runner: RunnerContext,
+): Promise<boolean> {
+  const candidates = uniqueNonEmpty(labels);
+  for (let i = 0; i < candidates.length; i += 1) {
+    const label = candidates[i];
+    const escaped = escapeRegExp(label);
+    const byRole = await tryClickLocator(
+      runner.page.getByRole('button', {
+        name: new RegExp(`^\\s*${escaped}\\s*$`),
+      }),
+    );
+    if (byRole) {
+      return true;
+    }
+    const byLooseRole = await tryClickLocator(
+      runner.page.getByRole('button', {
+        name: new RegExp(escaped),
+      }),
+    );
+    if (byLooseRole) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function fillTextboxWithLabel(
+  label: string,
+  value: string,
+  runner: RunnerContext,
+): Promise<boolean> {
+  const escaped = escapeRegExp(label);
+  const byRole = runner.page.getByRole('textbox', {
+    name: new RegExp(escaped),
+  });
+  try {
+    if ((await byRole.count()) > 0) {
+      await byRole.first().fill(value, { timeout: 5000 });
+      return true;
+    }
+  } catch (_error) {
+    // ignore
+  }
+  const byPlaceholder = runner.page.locator(
+    `input[placeholder*="${label}"], textarea[placeholder*="${label}"]`,
+  );
+  try {
+    if ((await byPlaceholder.count()) > 0) {
+      await byPlaceholder.first().fill(value, { timeout: 5000 });
+      return true;
+    }
+  } catch (_error) {
+    // ignore
+  }
+  return false;
+}
+
+async function triggerSearchWithFallback(
+  triggerText: string | undefined,
+  runner: RunnerContext,
+): Promise<void> {
+  const clicked = await clickButtonWithCandidates(
+    [triggerText || '', '搜索', '查询', '检索', '查找'],
+    runner,
+  );
+  if (!clicked) {
+    await runner.ai(`点击按钮“${triggerText || '搜索'}”`);
+  }
+  await runner.page.waitForLoadState('domcontentloaded');
+  await runner.page.waitForTimeout(800);
+}
+
+async function clickMenuWithFallback(
+  menuName: string,
+  menuHints: string,
+  runner: RunnerContext,
+): Promise<void> {
+  const escaped = escapeRegExp(menuName);
+  const clickedByRoleLink = await tryClickLocator(
+    runner.page.getByRole('link', { name: new RegExp(`^\\s*${escaped}\\s*$`) }),
+  );
+  if (clickedByRoleLink) {
+    return;
+  }
+
+  const clickedByRoleMenuItem = await tryClickLocator(
+    runner.page.getByRole('menuitem', {
+      name: new RegExp(`\\s*${escaped}\\s*`),
+    }),
+  );
+  if (clickedByRoleMenuItem) {
+    return;
+  }
+
+  const clickedByText = await tryClickLocator(
+    runner.page.locator('a,li,span,div').filter({ hasText: menuName }),
+  );
+  if (clickedByText) {
+    return;
+  }
+
+  await runner.ai(`点击左侧菜单“${menuName}”。${menuHints}`);
+}
+
 async function fillField(
   field: TaskField,
   task: AcceptanceTask,
   runner: RunnerContext,
+  runtimeContext: {
+    screenshotDir: string;
+    screenshotOnStep: boolean;
+  },
 ): Promise<void> {
+  if (isFieldValueEmpty(field)) {
+    return;
+  }
   const hints = (field.hints || []).join('；');
   if (field.componentType === 'cascader' && Array.isArray(field.value)) {
-    const cascaderPath = field.value.join(' > ');
-    await runner.ai(
-      `在弹窗“${task.form.dialogTitle || task.form.openButtonText}”中，点击字段“${field.label}”，并依次选择“${cascaderPath}”。${hints}`,
+    const levels = field.value.slice(0, 10);
+    if (levels.length === 0) {
+      return;
+    }
+    const maxRetry = 3;
+    for (let attempt = 1; attempt <= maxRetry; attempt += 1) {
+      await openCascaderPanel(field.label, task, runner);
+      for (let i = 0; i < levels.length; i += 1) {
+        const optionName = levels[i];
+        await clickCascaderOption(optionName, i, runner);
+        await runner.page.waitForTimeout(500);
+        if (runtimeContext.screenshotOnStep) {
+          const shotFile = `cascader_${sanitizeFileName(field.label)}_a${attempt}_${String(
+            i + 1,
+          ).padStart(2, '0')}_${sanitizeFileName(optionName)}.png`;
+          const shotPath = path.join(runtimeContext.screenshotDir, shotFile);
+          await runner.page.screenshot({ path: shotPath, fullPage: true });
+        }
+      }
+      await runner.page.waitForTimeout(500);
+      const actualValue = await readCascaderDisplayValue(field.label, task, runner.page);
+      if (matchCascaderPath(actualValue, levels)) {
+        return;
+      }
+      await runner.page.keyboard.press('Escape').catch(() => undefined);
+      await runner.page.waitForTimeout(300);
+    }
+    const finalValue = await readCascaderDisplayValue(field.label, task, runner.page);
+    throw new Error(
+      `级联字段“${field.label}”未成功选中。期望路径=${levels.join(
+        '/',
+      )}；实际值=${finalValue || '空'}`,
     );
-    return;
   }
   const fieldValue = toDisplayValue(field.value);
   const componentTips =
@@ -104,6 +585,56 @@ async function fillField(
       : '这是单行输入框。';
   await runner.ai(
     `在弹窗“${task.form.dialogTitle || task.form.openButtonText}”中，在字段“${field.label}”输入“${fieldValue}”。${componentTips}${hints}`,
+  );
+}
+
+async function submitFormWithAutoFix(
+  task: AcceptanceTask,
+  runner: RunnerContext,
+  runtimeContext: {
+    screenshotDir: string;
+    screenshotOnStep: boolean;
+  },
+): Promise<void> {
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const clicked = await clickButtonWithCandidates(
+      [task.form.submitButtonText, '确定', '提交', '保存'],
+      runner,
+    );
+    if (!clicked) {
+      await runner.ai(`点击按钮“${task.form.submitButtonText}”`);
+    }
+    await runner.page.waitForTimeout(1000);
+    const dialogOpened = await isDialogVisible(task, runner.page);
+    if (!dialogOpened) {
+      return;
+    }
+
+    const messages = await collectValidationMessages(runner.page);
+    const fieldsToFix = resolveFieldsByValidationMessages(task.form.fields, messages);
+
+    if (fieldsToFix.length > 0) {
+      for (let i = 0; i < fieldsToFix.length; i += 1) {
+        const field = fieldsToFix[i];
+        await fillField(field, task, runner, runtimeContext);
+      }
+      continue;
+    }
+
+    const hintText = messages.length ? `当前校验提示：${messages.join('；')}` : '';
+    await runner.ai(
+      `点击“${task.form.submitButtonText}”后仍在新增弹窗。请根据红色校验提示修正字段并再次提交。${hintText}`,
+    );
+    await runner.page.waitForTimeout(1000);
+    const reopened = await isDialogVisible(task, runner.page);
+    if (!reopened) {
+      return;
+    }
+  }
+  const finalMessages = await collectValidationMessages(runner.page);
+  throw new Error(
+    `提交失败：已重试${maxAttempts}次，弹窗仍未关闭。校验提示=${finalMessages.join('；') || '无明显提示'}`,
   );
 }
 
@@ -169,11 +700,40 @@ export async function runTaskScenario(
   const steps: StepResult[] = [];
   const querySnapshots: Record<string, unknown> = {};
   const resolvedValues = resolveFieldValues(task);
+  const screenshotOnStep = task.runtime?.screenshotOnStep === true;
+  const resultFile = path.join(runDir, 'result.json');
+  const progressFile = path.join(runDir, 'result.partial.json');
+
+  const writeProgress = (
+    inProgress: boolean,
+    status: 'passed' | 'failed',
+  ): void => {
+    const now = Date.now();
+    const payload = {
+      taskId: task.taskId,
+      taskName: task.taskName,
+      startedAt,
+      endedAt: new Date(now).toISOString(),
+      durationMs: now - started,
+      status,
+      inProgress,
+      taskFilePath,
+      runDir,
+      resolvedValues,
+      querySnapshots,
+      steps,
+    };
+    fs.writeFileSync(progressFile, JSON.stringify(payload, null, 2), 'utf-8');
+  };
+
+  writeProgress(true, 'passed');
 
   const runStep = async (
     stepName: string,
     handler: () => Promise<void>,
+    options?: RunStepOptions,
   ): Promise<void> => {
+    const required = options?.required !== false;
     const stepStartedAt = Date.now();
     const stepResult: StepResult = {
       name: stepName,
@@ -191,7 +751,7 @@ export async function runTaskScenario(
         stepResult.screenshotPath = shotPath;
       }
     } catch (error) {
-      stepResult.status = 'failed';
+      stepResult.status = required ? 'failed' : 'skipped';
       const shotFileName = `${String(steps.length + 1).padStart(2, '0')}_${sanitizeFileName(stepName)}_failed.png`;
       const shotPath = path.join(screenshotDir, shotFileName);
       await runner.page.screenshot({ path: shotPath, fullPage: true });
@@ -202,12 +762,17 @@ export async function runTaskScenario(
       stepResult.endedAt = new Date(endedOnError).toISOString();
       stepResult.durationMs = endedOnError - stepStartedAt;
       steps.push(stepResult);
-      throw error;
+      writeProgress(true, required ? 'failed' : 'passed');
+      if (required) {
+        throw error;
+      }
+      return;
     }
     const stepEndedAt = Date.now();
     stepResult.endedAt = new Date(stepEndedAt).toISOString();
     stepResult.durationMs = stepEndedAt - stepStartedAt;
     steps.push(stepResult);
+    writeProgress(true, 'passed');
   };
 
   let finalStatus: 'passed' | 'failed' = 'passed';
@@ -224,12 +789,34 @@ export async function runTaskScenario(
     });
 
     if (task.navigation?.homeReadyText) {
-      await runStep('等待首页加载', async () => {
-        await runner.aiWaitFor(
-          `页面出现“${task.navigation?.homeReadyText}”`,
-          withWaitForTimeout(stepTimeout),
-        );
-      });
+      await runStep(
+        '等待首页加载',
+        async () => {
+          const homeText = task.navigation.homeReadyText;
+          const firstMenu = task.navigation?.menuPath?.[0];
+          const timeoutMs = stepTimeout || 12000;
+          await runner.page.waitForLoadState('domcontentloaded');
+          if (firstMenu) {
+            const menuVisible = await waitVisibleByText(
+              runner.page,
+              firstMenu,
+              timeoutMs,
+            );
+            if (menuVisible) {
+              return;
+            }
+          }
+          const homeVisible = await waitVisibleByText(
+            runner.page,
+            homeText,
+            timeoutMs,
+          );
+          if (!homeVisible) {
+            throw new Error('首页加载等待超时');
+          }
+        },
+        { required: false },
+      );
     }
 
     if (task.navigation?.menuPath?.length) {
@@ -237,7 +824,7 @@ export async function runTaskScenario(
         const menuName = task.navigation.menuPath[i];
         await runStep(`点击菜单_${menuName}`, async () => {
           const menuHints = (task.navigation?.menuHints || []).join('；');
-          await runner.ai(`点击左侧菜单“${menuName}”。${menuHints}`);
+          await clickMenuWithFallback(menuName, menuHints, runner);
         });
       }
     }
@@ -248,35 +835,54 @@ export async function runTaskScenario(
 
     if (task.form.dialogTitle) {
       await runStep('等待新增弹窗显示', async () => {
-        await runner.aiWaitFor(
-          `页面出现弹窗标题“${task.form.dialogTitle}”`,
-          withWaitForTimeout(stepTimeout),
+        const visible = await waitVisibleByText(
+          runner.page,
+          task.form.dialogTitle,
+          stepTimeout || 12000,
         );
+        if (!visible) {
+          throw new Error(`未检测到弹窗标题：${task.form.dialogTitle}`);
+        }
       });
     }
 
     for (let i = 0; i < task.form.fields.length; i += 1) {
       const field = task.form.fields[i];
       await runStep(`填写字段_${field.label}`, async () => {
-        await fillField(field, task, runner);
+        await fillField(field, task, runner, {
+          screenshotDir,
+          screenshotOnStep,
+        });
       });
     }
 
     await runStep('提交新增表单', async () => {
-      await runner.ai(`点击按钮“${task.form.submitButtonText}”`);
+      await submitFormWithAutoFix(task, runner, {
+        screenshotDir,
+        screenshotOnStep,
+      });
     });
 
     if (task.form.successText) {
-      await runStep('检查提交提示', async () => {
-        await runner.aiWaitFor(
-          `页面出现提示“${task.form.successText}”`,
-          withWaitForTimeout(stepTimeout),
-        );
-      });
+      await runStep(
+        '检查提交提示',
+        async () => {
+          await waitVisibleByText(
+            runner.page,
+            task.form.successText,
+            8000,
+          );
+        },
+        { required: false },
+      );
     }
 
     if (task.form.closeButtonText) {
       await runStep('关闭新增弹窗', async () => {
+        const opened = await isDialogVisible(task, runner.page);
+        if (!opened) {
+          return;
+        }
         await runner.ai(`点击按钮“${task.form.closeButtonText}”关闭弹窗`);
       });
     }
@@ -285,17 +891,33 @@ export async function runTaskScenario(
       const keywordField = task.search.keywordFromField || '小区名称';
       const keyword = resolvedValues[keywordField] || resolvedValues['小区名称'] || '';
       await runStep('输入搜索条件', async () => {
-        await runner.ai(
-          `在搜索区字段“${task.search?.inputLabel}”输入“${keyword}”`,
-        );
+        const inputLabel = task.search?.inputLabel || '小区名称';
+        const filled = await fillTextboxWithLabel(inputLabel, keyword, runner);
+        if (!filled) {
+          await runner.ai(
+            `在搜索区字段“${inputLabel}”输入“${keyword}”`,
+          );
+        }
       });
       await runStep('点击查询按钮', async () => {
-        await runner.ai(`点击按钮“${task.search?.triggerButtonText || '查询'}”`);
+        await triggerSearchWithFallback(task.search?.triggerButtonText, runner);
       });
       await runStep('检查列表包含新增数据', async () => {
-        await runner.aiAssert(
-          `检查列表中存在“${keyword}”这一条小区数据`,
-        );
+        const foundOnFirstTry = await waitVisibleByText(runner.page, keyword, 8000);
+        if (foundOnFirstTry) {
+          return;
+        }
+        const inputLabel = task.search?.inputLabel || '小区名称';
+        const refilled = await fillTextboxWithLabel(inputLabel, keyword, runner);
+        if (!refilled) {
+          await runner.ai(`在搜索区字段“${inputLabel}”重新输入“${keyword}”`);
+        }
+        await triggerSearchWithFallback(task.search?.triggerButtonText, runner);
+        const foundOnSecondTry = await waitVisibleByText(runner.page, keyword, 8000);
+        if (foundOnSecondTry) {
+          return;
+        }
+        await runner.aiAssert(`检查列表中存在“${keyword}”这一条小区数据`);
       });
       await runStep('提取列表快照', async () => {
         const result = await runner.aiQuery<string[]>(
@@ -332,7 +954,7 @@ export async function runTaskScenario(
     steps,
   };
 
-  const resultFile = path.join(runDir, 'result.json');
   fs.writeFileSync(resultFile, JSON.stringify(result, null, 2), 'utf-8');
+  writeProgress(false, finalStatus);
   return result;
 }

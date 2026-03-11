@@ -126,6 +126,7 @@ npm run stage2:run:headed
 * Playwright 报告：`t_playwright-report/`
 * Midscene 报告：`t_midscene_run/report/`
 * 第二段结果：`t_acceptance-results/<taskId>/<timestamp>/result.json`
+* 第二段过程快照：`t_acceptance-results/<taskId>/<timestamp>/result.partial.json`
 * 第二段步骤截图：`t_acceptance-results/<taskId>/<timestamp>/screenshots/`
 
 ## 测试报告
