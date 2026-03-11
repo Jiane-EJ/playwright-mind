@@ -1,0 +1,84 @@
+{
+  "taskId": "replace-with-task-id",
+  "taskName": "replace-with-task-name",
+  "target": {
+    "url": "https://example.com/",
+    "browser": "chromium",
+    "headless": false
+  },
+  "account": {
+    "username": "${TEST_USERNAME}",
+    "password": "${TEST_PASSWORD}",
+    "loginHints": [
+      "用户名输入框可能显示为账号、用户名或登录名",
+      "密码输入框可能显示为密码",
+      "提交按钮可能显示为登录"
+    ]
+  },
+  "navigation": {
+    "homeReadyText": "首页",
+    "menuPath": [
+      "一级菜单名称",
+      "二级菜单名称"
+    ],
+    "menuHints": [
+      "左侧菜单可能为树形结构",
+      "如果一级菜单已展开，不需要重复点击"
+    ]
+  },
+  "form": {
+    "openButtonText": "新增",
+    "dialogTitle": "新增弹窗标题",
+    "submitButtonText": "提交",
+    "closeButtonText": "关闭",
+    "successText": "操作成功",
+    "fields": [
+      {
+        "label": "字段标签",
+        "componentType": "input",
+        "value": "字段值",
+        "required": true,
+        "unique": false,
+        "hints": [
+          "字段所在区域的辅助描述"
+        ]
+      }
+    ]
+  },
+  "search": {
+    "inputLabel": "搜索框标签",
+    "keywordFromField": "字段标签",
+    "triggerButtonText": "查询",
+    "resultTableTitle": "列表标题",
+    "expectedColumns": [
+      "名称",
+      "状态"
+    ]
+  },
+  "assertions": [
+    {
+      "type": "toast",
+      "expectedText": "操作成功"
+    },
+    {
+      "type": "table-row-exists",
+      "matchField": "字段标签"
+    }
+  ],
+  "cleanup": {
+    "enabled": false,
+    "strategy": "none",
+    "notes": "如需删除测试数据，请补充删除入口与确认文案"
+  },
+  "approval": {
+    "approved": true,
+    "approvedBy": "qa-owner",
+    "approvedAt": "2026-03-11T00:00:00.000Z"
+  },
+  "runtime": {
+    "stepTimeoutMs": 30000,
+    "pageTimeoutMs": 60000,
+    "screenshotOnStep": true,
+    "trace": true
+  }
+}

@@ -5,6 +5,7 @@ node_modules/
 /playwright/.cache/
 /t_test-results/
 /t_playwright-report/
+/t_acceptance-results/
 
 # Midscene.js dump files
 midscene_run/report

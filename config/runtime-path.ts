@@ -30,6 +30,11 @@ export const midsceneRunDir = readEnv(
   `${runtimeDirPrefix}midscene_run`,
 );
 
+export const acceptanceResultDir = readEnv(
+  'ACCEPTANCE_RESULT_DIR',
+  `${runtimeDirPrefix}acceptance-results`,
+);
+
 export function resolveRuntimePath(targetDir: string): string {
   return path.resolve(process.cwd(), targetDir);
 }

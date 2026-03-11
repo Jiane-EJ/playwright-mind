@@ -1,0 +1,183 @@
+{
+  "taskId": "wyt-community-create-001",
+  "taskName": "物业平台-新增小区并回查",
+  "target": {
+    "url": "https://wyt-pf-test.fuioupay.com/",
+    "browser": "chromium",
+    "headless": false
+  },
+  "account": {
+    "username": "xwytlb001",
+    "password": "888888",
+    "loginHints": [
+      "登录页存在账号和密码输入框",
+      "登录按钮文案通常为登录"
+    ]
+  },
+  "navigation": {
+    "homeReadyText": "首页",
+    "menuPath": [
+      "小区管理",
+      "小区信息管理"
+    ],
+    "menuHints": [
+      "左侧为层级菜单",
+      "进入首页后再执行菜单点击",
+      "当前页面左侧已显示小区信息管理为选中状态"
+    ]
+  },
+  "form": {
+    "openButtonText": "新增小区",
+    "dialogTitle": "新增小区",
+    "submitButtonText": "确定",
+    "closeButtonText": "取消",
+    "successText": "操作成功",
+    "notes": [
+      "弹窗右上角存在关闭按钮 X",
+      "底部主按钮文案为确定，次按钮文案为取消",
+      "提交成功提示文案暂按操作成功处理，联调时如不一致需要修正",
+      "截图中带红色星号的字段只有小区名称、小区地址、省市区"
+    ],
+    "fields": [
+      {
+        "label": "小区名称",
+        "componentType": "input",
+        "value": "AI验收小区_${NOW_YYYYMMDDHHMMSS}",
+        "required": true,
+        "unique": true,
+        "hints": [
+          "输入框占位文案为小区名称",
+          "右侧存在长度计数 0/100",
+          "使用时间戳避免与历史数据重复"
+        ]
+      },
+      {
+        "label": "小区地址",
+        "componentType": "textarea",
+        "value": "福建省龙岩市龙岩市测试地址_${NOW_YYYYMMDDHHMMSS}",
+        "required": true,
+        "unique": false,
+        "hints": [
+          "多行输入框占位文案为小区地址",
+          "右侧存在长度计数 0/255"
+        ]
+      },
+      {
+        "label": "省市区",
+        "componentType": "cascader",
+        "value": [
+          "福建省",
+          "龙岩市",
+          "龙岩市"
+        ],
+        "required": true,
+        "unique": false,
+        "hints": [
+          "点击后展开三级级联面板",
+          "当前截图中已选路径为 福建省 / 龙岩市 / 龙岩市",
+          "输入框占位文案为 请选择省市区"
+        ]
+      },
+      {
+        "label": "负责人",
+        "componentType": "input",
+        "value": "AI验收负责人",
+        "required": false,
+        "unique": false,
+        "hints": [
+          "输入框占位文案为负责人姓名"
+        ]
+      },
+      {
+        "label": "联系电话",
+        "componentType": "input",
+        "value": "13800138000",
+        "required": false,
+        "unique": false,
+        "hints": [
+          "输入框占位文案为负责人联系电话",
+          "建议联调时确认是否存在手机号格式校验"
+        ]
+      }
+    ]
+  },
+  "search": {
+    "inputLabel": "小区名称",
+    "extraInputLabels": [
+      "负责人"
+    ],
+    "keywordFromField": "小区名称",
+    "triggerButtonText": "查询",
+    "resetButtonText": "重置",
+    "resultTableTitle": "小区信息列表",
+    "notes": [
+      "搜索区存在两个输入框：小区名称、负责人",
+      "右上角存在绿色搜索按钮和橙色重置按钮",
+      "新增按钮位于搜索按钮下方右侧，文案为新增小区"
+    ],
+    "expectedColumns": [
+      "小区名称",
+      "所在地区",
+      "详细地址",
+      "负责人",
+      "联系电话",
+      "操作人",
+      "操作时间",
+      "所属"
+    ],
+    "rowActionButtons": [
+      "详情",
+      "绑定电子码",
+      "绑定POS",
+      "编辑",
+      "删除"
+    ],
+    "pagination": {
+      "pageSizeText": "20条/页",
+      "summaryPattern": "共{total}条"
+    }
+  },
+  "assertions": [
+    {
+      "type": "toast",
+      "expectedText": "操作成功"
+    },
+    {
+      "type": "table-row-exists",
+      "matchField": "小区名称"
+    },
+    {
+      "type": "table-cell-equals",
+      "matchField": "小区名称",
+      "expectedColumns": [
+        "小区名称",
+        "所在地区",
+        "详细地址",
+        "负责人",
+        "联系电话"
+      ]
+    },
+    {
+      "type": "table-cell-contains",
+      "matchField": "小区名称",
+      "column": "所在地区",
+      "expectedFromField": "省市区"
+    }
+  ],
+  "cleanup": {
+    "enabled": false,
+    "strategy": "none",
+    "notes": "若后续需要回收测试数据，请补充删除流程"
+  },
+  "approval": {
+    "approved": true,
+    "approvedBy": "manual-review",
+    "approvedAt": "2026-03-11T00:00:00.000Z"
+  },
+  "runtime": {
+    "stepTimeoutMs": 30000,
+    "pageTimeoutMs": 60000,
+    "screenshotOnStep": true,
+    "trace": true
+  }
+}
