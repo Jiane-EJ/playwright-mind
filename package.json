@@ -4,6 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "db:init": "node --experimental-sqlite scripts/db/migrate.mjs",
+    "db:migrate": "node --experimental-sqlite scripts/db/migrate.mjs",
     "stage2:run": "playwright test tests/generated/stage2-acceptance-runner.spec.ts --project=chromium",
     "stage2:run:headed": "playwright test tests/generated/stage2-acceptance-runner.spec.ts --project=chromium --headed"
   },

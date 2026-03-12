@@ -45,6 +45,8 @@ PLAYWRIGHT_OUTPUT_DIR=t_runtime/test-results
 PLAYWRIGHT_HTML_REPORT_DIR=t_runtime/playwright-report
 MIDSCENE_RUN_DIR=t_runtime/midscene_run
 ACCEPTANCE_RESULT_DIR=t_runtime/acceptance-results
+DB_DRIVER=sqlite
+DB_FILE_PATH=t_runtime/db/hi_test.sqlite
 STAGE2_TASK_FILE=specs/tasks/acceptance-task.community-create.example.json
 STAGE2_REQUIRE_APPROVAL=false
 STAGE2_CAPTCHA_MODE=auto
@@ -79,6 +81,7 @@ STAGE2_CAPTCHA_WAIT_TIMEOUT_MS=120000
 * `PLAYWRIGHT_HTML_REPORT_DIR`：Playwright HTML 报告目录
 * `MIDSCENE_RUN_DIR`：Midscene 运行日志、缓存、报告根目录
 * `ACCEPTANCE_RESULT_DIR`：第二段结构化结果目录（`result.json`、步骤截图）
+* `DB_FILE_PATH`：本地数据库文件目录（默认 `t_runtime/db/hi_test.sqlite`）
 
 默认生成结果如下：
 
@@ -89,6 +92,40 @@ STAGE2_CAPTCHA_WAIT_TIMEOUT_MS=120000
 * `t_runtime/midscene_run/tmp`
 * `t_runtime/midscene_run/cache`
 * `t_runtime/acceptance-results/`
+* `t_runtime/db/hi_test.sqlite`
+
+## 全局数据持久化底座
+
+项目已新增全局数据持久化底座，当前默认使用本地 `SQLite` 单文件数据库，表结构按 `MySQL` 兼容子集设计，后续可迁移到 MySQL。
+
+当前基础表包括：
+
+* `ai_task`：任务主记录
+* `ai_task_version`：任务版本与 JSON 内容
+* `ai_run`：阶段运行主记录
+* `ai_run_step`：步骤明细
+* `ai_snapshot`：结构化快照（JSON 字符串）
+* `ai_artifact`：附件元数据（截图、报告、结果文件路径）
+* `ai_audit_log`：关键审计日志
+
+说明：
+
+* 当前文件系统仍保留截图、报告、`result.json` 等原始产物
+* 数据库只存结构化信息和文件路径，不直接保存大文件二进制
+* 当前实现脚本基于 Node `node:sqlite`，运行时需加 `--experimental-sqlite`
+* 当前仅落地本地 `sqlite` 驱动，MySQL 连接能力将在后续阶段补充
+
+初始化数据库：
+
+```shell
+npm run db:init
+```
+
+执行 migration：
+
+```shell
+npm run db:migrate
+```
 
 ## 测试入口
 
@@ -160,3 +197,12 @@ npm run stage2:run:headed
 | 第二段最小执行器（JSON 驱动） | 已完成 | 入口 `tests/generated/stage2-acceptance-runner.spec.ts` |
 | 目录结构整理（运行产物收敛） | 已完成 | 运行目录统一归档到 `t_runtime/` |
 | 登录滑块验证码自动处理 | 已完成 | AI + Playwright 自动识别并拖动滑块 |
+| 全局数据持久化底座 | 已完成基础创建 | 已新增数据库配置、migration 与初始化脚本 |
+
+## 当前推进顺序
+
+当前按以下顺序推进：
+
+1. 全局数据持久化底座
+2. 第二段数据持久化改造
+3. 第一段整体方案设计与开发
