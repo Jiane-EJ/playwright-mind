@@ -140,11 +140,16 @@
   "assertions": [
     {
       "type": "toast",
-      "expectedText": "操作成功"
+      "expectedText": "操作成功",
+      "timeoutMs": 15000,
+      "retryCount": 2,
+      "soft": true
     },
     {
       "type": "table-row-exists",
-      "matchField": "小区名称"
+      "matchField": "小区名称",
+      "timeoutMs": 10000,
+      "retryCount": 2
     },
     {
       "type": "table-cell-equals",
@@ -155,19 +160,36 @@
         "详细地址",
         "负责人",
         "联系电话"
-      ]
+      ],
+      "retryCount": 2
     },
     {
       "type": "table-cell-contains",
       "matchField": "小区名称",
       "column": "所在地区",
-      "expectedFromField": "省市区"
+      "expectedFromField": "省市区",
+      "retryCount": 2
     }
   ],
   "cleanup": {
-    "enabled": false,
-    "strategy": "none",
-    "notes": "若后续需要回收测试数据，请补充删除流程"
+    "enabled": true,
+    "strategy": "delete-created",
+    "matchField": "小区名称",
+    "searchBeforeCleanup": true,
+    "failOnError": false,
+    "action": {
+      "actionType": "delete",
+      "rowButtonText": "删除",
+      "confirmDialogTitle": "确认删除",
+      "confirmButtonText": "确定",
+      "cancelButtonText": "取消",
+      "successText": "删除成功",
+      "hints": [
+        "删除按钮位于操作列最右侧",
+        "确认弹窗可能需要二次确认"
+      ]
+    },
+    "notes": "清理本次AI验收新增的测试小区数据"
   },
   "approval": {
     "approved": true,

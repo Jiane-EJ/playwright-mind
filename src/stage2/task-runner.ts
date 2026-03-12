@@ -9,6 +9,8 @@ import type {
   Stage2ExecutionResult,
   StepResult,
   TaskAssertion,
+  TaskCleanup,
+  TaskCleanupAction,
   TaskField,
 } from './types';
 
@@ -1017,29 +1019,266 @@ async function submitFormWithAutoFix(
   );
 }
 
+// ============================================================
+// 断言执行器 - 通用实现（Playwright优先 + AI兜底 + 重试机制）
+// ============================================================
+
+const DEFAULT_ASSERTION_TIMEOUT_MS = 15000;
+const DEFAULT_ASSERTION_RETRY_COUNT = 2;
+const ASSERTION_POLL_INTERVAL_MS = 500;
+
+/**
+ * 通用文本可见性检测（Playwright 硬检测）
+ * 支持多种文本匹配模式
+ */
+async function detectTextVisible(
+  page: Page,
+  text: string,
+  timeoutMs: number,
+): Promise<{ found: boolean; matchedText?: string }> {
+  const deadline = Date.now() + timeoutMs;
+  const normalizedTarget = normalizeText(text);
+
+  while (Date.now() < deadline) {
+    try {
+      // 策略1：精确文本匹配
+      const exactLocator = page.getByText(text, { exact: true });
+      if (await isLocatorVisible(exactLocator)) {
+        return { found: true, matchedText: text };
+      }
+
+      // 策略2：模糊文本匹配
+      const fuzzyLocator = page.getByText(text, { exact: false });
+      if (await isLocatorVisible(fuzzyLocator)) {
+        return { found: true, matchedText: text };
+      }
+
+      // 策略3：Toast/Message 组件检测
+      const toastSelectors = [
+        '.el-message',
+        '.el-notification',
+        '.ant-message',
+        '.ant-notification',
+        '.ivu-message',
+        '.ivu-notice',
+        '[role="alert"]',
+        '[class*="toast"]',
+        '[class*="message"]',
+        '[class*="notification"]',
+      ];
+      for (let i = 0; i < toastSelectors.length; i += 1) {
+        const toastLocator = page.locator(toastSelectors[i]);
+        const count = await toastLocator.count();
+        for (let j = 0; j < count; j += 1) {
+          const item = toastLocator.nth(j);
+          if (!(await item.isVisible())) {
+            continue;
+          }
+          const itemText = await item.innerText().catch(() => '');
+          if (normalizeText(itemText).includes(normalizedTarget)) {
+            return { found: true, matchedText: itemText.trim() };
+          }
+        }
+      }
+    } catch (_error) {
+      // 忽略检测异常，继续轮询
+    }
+    await page.waitForTimeout(ASSERTION_POLL_INTERVAL_MS);
+  }
+  return { found: false };
+}
+
+/**
+ * 通用表格行检测（Playwright 硬检测）
+ */
+async function detectTableRowExists(
+  page: Page,
+  cellValue: string,
+  timeoutMs: number,
+): Promise<{ found: boolean; rowIndex?: number }> {
+  const deadline = Date.now() + timeoutMs;
+  const normalizedValue = normalizeText(cellValue);
+
+  while (Date.now() < deadline) {
+    try {
+      const tableSelectors = [
+        'table tbody tr',
+        '.el-table__body tr',
+        '.ant-table-tbody tr',
+        '.ivu-table-tbody tr',
+        '[role="row"]',
+      ];
+      for (let i = 0; i < tableSelectors.length; i += 1) {
+        const rows = page.locator(tableSelectors[i]);
+        const count = await rows.count();
+        for (let j = 0; j < count; j += 1) {
+          const row = rows.nth(j);
+          if (!(await row.isVisible())) {
+            continue;
+          }
+          const rowText = await row.innerText().catch(() => '');
+          if (normalizeText(rowText).includes(normalizedValue)) {
+            return { found: true, rowIndex: j };
+          }
+        }
+      }
+    } catch (_error) {
+      // 忽略检测异常，继续轮询
+    }
+    await page.waitForTimeout(ASSERTION_POLL_INTERVAL_MS);
+  }
+  return { found: false };
+}
+
+/**
+ * 带重试的断言执行器
+ */
+async function executeAssertionWithRetry<T>(
+  executor: () => Promise<T>,
+  validator: (result: T) => boolean,
+  retryCount: number,
+  delayMs: number = 1000,
+): Promise<{ success: boolean; result?: T; attempts: number }> {
+  let attempts = 0;
+  while (attempts <= retryCount) {
+    attempts += 1;
+    try {
+      const result = await executor();
+      if (validator(result)) {
+        return { success: true, result, attempts };
+      }
+    } catch (_error) {
+      // 重试
+    }
+    if (attempts <= retryCount) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  return { success: false, attempts };
+}
+
+/**
+ * 通用断言执行入口
+ * 策略：Playwright 硬检测优先 -> AI 断言兜底 -> 重试机制
+ */
 async function runAssertion(
   assertion: TaskAssertion,
   task: AcceptanceTask,
   resolvedValues: Record<string, string>,
   runner: RunnerContext,
 ): Promise<void> {
+  const timeoutMs = assertion.timeoutMs || DEFAULT_ASSERTION_TIMEOUT_MS;
+  const retryCount = assertion.retryCount ?? DEFAULT_ASSERTION_RETRY_COUNT;
+
+  // Toast 断言：Playwright 检测优先，AI 兜底
   if (assertion.type === 'toast' && assertion.expectedText) {
-    await runner.aiWaitFor(`页面出现提示“${assertion.expectedText}”`);
-    return;
+    const expectedText = assertion.expectedText;
+
+    // 先用 Playwright 硬检测
+    const pwResult = await executeAssertionWithRetry(
+      async () => detectTextVisible(runner.page, expectedText, timeoutMs / 2),
+      (r) => r.found,
+      1,
+      500,
+    );
+    if (pwResult.success) {
+      console.log(`[断言通过] toast="${expectedText}" (Playwright检测, 尝试${pwResult.attempts}次)`);
+      return;
+    }
+
+    // Playwright 未检测到，使用 AI 兜底
+    console.log(`[断言降级] toast="${expectedText}" Playwright未检测到，使用AI断言`);
+    const aiResult = await executeAssertionWithRetry(
+      async () => {
+        const queryResult = await runner.aiQuery<{ found: boolean; text?: string }>(
+          `检查页面是否存在包含"${expectedText}"的提示信息（如Toast、弹窗、通知等）。返回格式：{ found: boolean, text: string }`,
+        );
+        return queryResult;
+      },
+      (r) => r?.found === true,
+      retryCount,
+      1000,
+    );
+    if (aiResult.success) {
+      console.log(`[断言通过] toast="${expectedText}" (AI检测, 尝试${aiResult.attempts}次)`);
+      return;
+    }
+
+    throw new Error(
+      `Toast断言失败：未检测到"${expectedText}"。已尝试Playwright硬检测和AI检测。`,
+    );
   }
+
+  // 表格行存在断言
   if (assertion.type === 'table-row-exists' && assertion.matchField) {
     const expectedValue = resolvedValues[assertion.matchField] || '';
-    await runner.aiAssert(`检查列表中存在“${expectedValue}”对应的数据行`);
-    return;
+
+    // 先用 Playwright 硬检测
+    const pwResult = await executeAssertionWithRetry(
+      async () => detectTableRowExists(runner.page, expectedValue, timeoutMs / 2),
+      (r) => r.found,
+      1,
+      500,
+    );
+    if (pwResult.success) {
+      console.log(`[断言通过] table-row-exists="${expectedValue}" (Playwright检测)`);
+      return;
+    }
+
+    // AI 兜底
+    console.log(`[断言降级] table-row-exists="${expectedValue}" 使用AI断言`);
+    const aiResult = await executeAssertionWithRetry(
+      async () => {
+        const queryResult = await runner.aiQuery<{ found: boolean; rowInfo?: string }>(
+          `检查当前页面列表/表格中是否存在包含"${expectedValue}"的数据行。返回格式：{ found: boolean, rowInfo: string }`,
+        );
+        return queryResult;
+      },
+      (r) => r?.found === true,
+      retryCount,
+      1000,
+    );
+    if (aiResult.success) {
+      console.log(`[断言通过] table-row-exists="${expectedValue}" (AI检测)`);
+      return;
+    }
+
+    throw new Error(
+      `表格行断言失败：未找到包含"${expectedValue}"的数据行。`,
+    );
   }
+
+  // 表格单元格值断言
   if (assertion.type === 'table-cell-equals' && assertion.matchField) {
     const expectedValue = resolvedValues[assertion.matchField] || '';
     const columns = (assertion.expectedColumns || []).join('、');
-    await runner.aiAssert(
-      `检查列表中“${assertion.matchField}”为“${expectedValue}”的这一行，列“${columns}”均显示为本次新增数据对应值`,
+
+    const aiResult = await executeAssertionWithRetry(
+      async () => {
+        const queryResult = await runner.aiQuery<{
+          found: boolean;
+          matchedRow?: boolean;
+          columnValues?: Record<string, string>;
+        }>(
+          `在当前列表中找到"${assertion.matchField}"为"${expectedValue}"的行，提取列"${columns}"的值。返回格式：{ found: boolean, matchedRow: boolean, columnValues: { 列名: 值 } }`,
+        );
+        return queryResult;
+      },
+      (r) => r?.found === true && r?.matchedRow === true,
+      retryCount,
+      1000,
     );
-    return;
+    if (aiResult.success) {
+      console.log(`[断言通过] table-cell-equals (AI检测)`);
+      return;
+    }
+
+    throw new Error(
+      `表格单元格断言失败：未能验证"${assertion.matchField}"为"${expectedValue}"的行中相关列的值。`,
+    );
   }
+
+  // 表格单元格包含断言
   if (
     assertion.type === 'table-cell-contains' &&
     assertion.matchField &&
@@ -1048,15 +1287,435 @@ async function runAssertion(
   ) {
     const matchValue = resolvedValues[assertion.matchField] || '';
     const expectedValue = resolvedValues[assertion.expectedFromField] || '';
-    await runner.aiAssert(
-      `检查列表中“${assertion.matchField}”为“${matchValue}”的这一行，列“${assertion.column}”包含“${expectedValue}”`,
+
+    const aiResult = await executeAssertionWithRetry(
+      async () => {
+        const queryResult = await runner.aiQuery<{
+          found: boolean;
+          cellValue?: string;
+          contains?: boolean;
+        }>(
+          `在当前列表中找到"${assertion.matchField}"为"${matchValue}"的行，检查列"${assertion.column}"是否包含"${expectedValue}"。返回格式：{ found: boolean, cellValue: string, contains: boolean }`,
+        );
+        return queryResult;
+      },
+      (r) => r?.found === true && r?.contains === true,
+      retryCount,
+      1000,
     );
+    if (aiResult.success) {
+      console.log(`[断言通过] table-cell-contains (AI检测)`);
+      return;
+    }
+
+    throw new Error(
+      `表格单元格包含断言失败：列"${assertion.column}"未包含"${expectedValue}"。`,
+    );
+  }
+
+  // 自定义描述断言
+  if (assertion.type === 'custom' && assertion.description) {
+    const aiResult = await executeAssertionWithRetry(
+      async () => {
+        const queryResult = await runner.aiQuery<{ passed: boolean; reason?: string }>(
+          `根据以下描述验证当前页面状态："${assertion.description}"。返回格式：{ passed: boolean, reason: string }`,
+        );
+        return queryResult;
+      },
+      (r) => r?.passed === true,
+      retryCount,
+      1000,
+    );
+    if (aiResult.success) {
+      console.log(`[断言通过] custom="${assertion.description}" (AI检测)`);
+      return;
+    }
+
+    throw new Error(
+      `自定义断言失败：${assertion.description}`,
+    );
+  }
+
+  // 保底策略：未知断言类型使用 aiQuery 结构化验证
+  console.log(`[断言] 未知类型="${assertion.type}"，使用AI通用断言`);
+  const aiResult = await executeAssertionWithRetry(
+    async () => {
+      const queryResult = await runner.aiQuery<{ passed: boolean; reason?: string }>(
+        `根据当前页面内容执行断言验证：${JSON.stringify(assertion)}。返回格式：{ passed: boolean, reason: string }`,
+      );
+      return queryResult;
+    },
+    (r) => r?.passed === true,
+    retryCount,
+    1000,
+  );
+  if (aiResult.success) {
+    console.log(`[断言通过] 通用AI断言`);
     return;
   }
-  // 保底策略：未知断言类型交给 aiAssert 直接执行文本断言。
-  await runner.aiAssert(
-    `根据当前页面内容执行断言：${JSON.stringify(assertion)}`,
+
+  throw new Error(
+    `断言失败：${JSON.stringify(assertion)}`,
   );
+}
+
+// ============================================================
+// 数据清理流程 - 通用实现
+// ============================================================
+
+/**
+ * 点击表格行操作按钮
+ * 支持多种 UI 框架的表格结构
+ */
+async function clickRowActionButton(
+  page: Page,
+  rowValue: string,
+  buttonText: string,
+  runner: RunnerContext,
+): Promise<boolean> {
+  const normalizedValue = normalizeText(rowValue);
+  const normalizedButton = normalizeText(buttonText);
+
+  // 策略1：通过表格行定位操作按钮
+  const tableSelectors = [
+    'table tbody tr',
+    '.el-table__body tr',
+    '.ant-table-tbody tr',
+    '.ivu-table-tbody tr',
+    '[role="row"]',
+  ];
+
+  for (let i = 0; i < tableSelectors.length; i += 1) {
+    const rows = page.locator(tableSelectors[i]);
+    const count = await rows.count();
+    for (let j = 0; j < count; j += 1) {
+      const row = rows.nth(j);
+      if (!(await row.isVisible())) {
+        continue;
+      }
+      const rowText = await row.innerText().catch(() => '');
+      if (!normalizeText(rowText).includes(normalizedValue)) {
+        continue;
+      }
+
+      // 找到目标行，尝试点击操作按钮
+      const buttonSelectors = [
+        `button:has-text("${buttonText}")`,
+        `a:has-text("${buttonText}")`,
+        `span:has-text("${buttonText}")`,
+        `.el-button:has-text("${buttonText}")`,
+        `.ant-btn:has-text("${buttonText}")`,
+        `[role="button"]:has-text("${buttonText}")`,
+      ];
+
+      for (let k = 0; k < buttonSelectors.length; k += 1) {
+        const btn = row.locator(buttonSelectors[k]).first();
+        if (await btn.isVisible().catch(() => false)) {
+          await btn.click({ timeout: 5000 });
+          return true;
+        }
+      }
+
+      // 尝试通过文本精确匹配
+      const byText = row.getByText(buttonText, { exact: true });
+      if (await byText.isVisible().catch(() => false)) {
+        await byText.click({ timeout: 5000 });
+        return true;
+      }
+    }
+  }
+
+  // Playwright 定位失败，使用 AI
+  console.log(`[数据清理] Playwright定位失败，使用AI点击行操作按钮"${buttonText}"`);
+  await runner.ai(
+    `在列表中找到包含"${rowValue}"的数据行，点击该行的"${buttonText}"按钮`,
+  );
+  return true;
+}
+
+/**
+ * 处理确认弹窗
+ */
+async function handleConfirmDialog(
+  page: Page,
+  action: TaskCleanupAction,
+  runner: RunnerContext,
+): Promise<void> {
+  const confirmText = action.confirmButtonText || '确定';
+  const dialogTitle = action.confirmDialogTitle;
+
+  // 等待确认弹窗出现
+  await page.waitForTimeout(500);
+
+  // 策略1：通过弹窗容器定位确认按钮
+  const dialogSelectors = [
+    'div[role="dialog"]',
+    '.el-dialog__wrapper',
+    '.el-message-box__wrapper',
+    '.ant-modal-wrap',
+    '.ant-modal-confirm',
+    '.ivu-modal-wrap',
+    '[class*="confirm"]',
+    '[class*="modal"]',
+  ];
+
+  for (let i = 0; i < dialogSelectors.length; i += 1) {
+    const dialogs = page.locator(dialogSelectors[i]);
+    const count = await dialogs.count();
+    for (let j = 0; j < count; j += 1) {
+      const dialog = dialogs.nth(j);
+      if (!(await dialog.isVisible())) {
+        continue;
+      }
+
+      // 如果指定了弹窗标题，验证是否匹配
+      if (dialogTitle) {
+        const dialogText = await dialog.innerText().catch(() => '');
+        if (!normalizeText(dialogText).includes(normalizeText(dialogTitle))) {
+          continue;
+        }
+      }
+
+      // 尝试点击确认按钮
+      const escaped = escapeRegExp(confirmText);
+      const confirmBtn = dialog.getByRole('button', {
+        name: new RegExp(`^\\s*${escaped}\\s*$`),
+      });
+      if (await confirmBtn.isVisible().catch(() => false)) {
+        await confirmBtn.click({ timeout: 5000 });
+        await page.waitForTimeout(500);
+        return;
+      }
+
+      // 宽松匹配
+      const looseBtn = dialog.getByRole('button', {
+        name: new RegExp(escaped),
+      });
+      if (await looseBtn.isVisible().catch(() => false)) {
+        await looseBtn.click({ timeout: 5000 });
+        await page.waitForTimeout(500);
+        return;
+      }
+    }
+  }
+
+  // Playwright 定位失败，使用 AI
+  console.log(`[数据清理] Playwright定位失败，使用AI点击确认按钮"${confirmText}"`);
+  await runner.ai(`在确认弹窗中点击"${confirmText}"按钮`);
+  await page.waitForTimeout(500);
+}
+
+/**
+ * 等待清理成功提示
+ */
+async function waitForCleanupSuccess(
+  page: Page,
+  successText: string,
+  timeoutMs: number,
+): Promise<boolean> {
+  const result = await detectTextVisible(page, successText, timeoutMs);
+  return result.found;
+}
+
+/**
+ * 执行单条数据的删除操作
+ */
+async function executeDeleteAction(
+  task: AcceptanceTask,
+  targetValue: string,
+  action: TaskCleanupAction,
+  runner: RunnerContext,
+): Promise<{ success: boolean; message: string }> {
+  const page = runner.page;
+  const buttonText = action.rowButtonText || '删除';
+
+  try {
+    // 1. 点击行操作按钮
+    console.log(`[数据清理] 点击"${targetValue}"的"${buttonText}"按钮`);
+    await clickRowActionButton(page, targetValue, buttonText, runner);
+    await page.waitForTimeout(300);
+
+    // 2. 处理确认弹窗
+    if (action.confirmButtonText || action.confirmDialogTitle) {
+      console.log(`[数据清理] 处理确认弹窗`);
+      await handleConfirmDialog(page, action, runner);
+    }
+
+    // 3. 等待成功提示
+    if (action.successText) {
+      const success = await waitForCleanupSuccess(page, action.successText, 8000);
+      if (!success) {
+        console.warn(`[数据清理] 未检测到成功提示"${action.successText}"，但继续执行`);
+      }
+    }
+
+    await page.waitForTimeout(500);
+    return { success: true, message: `已删除"${targetValue}"` };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return { success: false, message: `删除"${targetValue}"失败: ${errorMessage}` };
+  }
+}
+
+/**
+ * 执行自定义清理操作
+ */
+async function executeCustomCleanupAction(
+  task: AcceptanceTask,
+  targetValue: string,
+  action: TaskCleanupAction,
+  runner: RunnerContext,
+): Promise<{ success: boolean; message: string }> {
+  if (!action.customInstruction) {
+    return { success: false, message: '自定义清理操作缺少 customInstruction' };
+  }
+
+  try {
+    // 替换指令中的占位符
+    const instruction = action.customInstruction
+      .replace(/\{targetValue\}/g, targetValue)
+      .replace(/\{value\}/g, targetValue);
+
+    console.log(`[数据清理] 执行自定义操作: ${instruction}`);
+    await runner.ai(instruction);
+    await runner.page.waitForTimeout(500);
+
+    return { success: true, message: `自定义清理完成: ${targetValue}` };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return { success: false, message: `自定义清理失败: ${errorMessage}` };
+  }
+}
+
+/**
+ * 搜索定位待清理数据
+ */
+async function searchForCleanupTarget(
+  task: AcceptanceTask,
+  targetValue: string,
+  runner: RunnerContext,
+): Promise<boolean> {
+  const page = runner.page;
+  const search = task.search;
+
+  if (!search) {
+    console.log(`[数据清理] 任务未配置搜索，跳过搜索步骤`);
+    return true;
+  }
+
+  const inputLabel = search.inputLabel || '关键词';
+
+  // 填写搜索条件
+  const filled = await fillTextboxWithLabel(inputLabel, targetValue, runner);
+  if (!filled) {
+    await runner.ai(`在搜索区字段"${inputLabel}"输入"${targetValue}"`);
+  }
+
+  // 触发搜索
+  await triggerSearchWithFallback(search.triggerButtonText, runner);
+
+  // 等待列表加载
+  await page.waitForTimeout(800);
+
+  // 检查是否找到目标数据
+  const result = await detectTableRowExists(page, targetValue, 5000);
+  return result.found;
+}
+
+/**
+ * 执行数据清理流程
+ */
+async function runCleanup(
+  task: AcceptanceTask,
+  resolvedValues: Record<string, string>,
+  runner: RunnerContext,
+): Promise<{ success: boolean; cleanedCount: number; errors: string[] }> {
+  const cleanup = task.cleanup;
+  if (!cleanup?.enabled || cleanup.strategy === 'none') {
+    console.log(`[数据清理] 清理未启用，跳过`);
+    return { success: true, cleanedCount: 0, errors: [] };
+  }
+
+  const action = cleanup.action;
+  if (!action) {
+    console.log(`[数据清理] 未配置清理操作，跳过`);
+    return { success: true, cleanedCount: 0, errors: [] };
+  }
+
+  const errors: string[] = [];
+  let cleanedCount = 0;
+
+  // 确定待清理的目标值
+  const matchField = cleanup.matchField || '小区名称';
+  const targetValues: string[] = [];
+
+  if (cleanup.strategy === 'delete-created') {
+    // 仅删除本次新增的数据
+    const createdValue = resolvedValues[matchField];
+    if (createdValue) {
+      targetValues.push(createdValue);
+    }
+  } else if (cleanup.strategy === 'delete-all-matched') {
+    // 删除所有匹配的数据（需要通过 AI 查询当前列表）
+    try {
+      const matchedItems = await runner.aiQuery<string[]>(
+        `提取当前列表中所有"${matchField}"列的值，返回字符串数组`,
+      );
+      if (Array.isArray(matchedItems)) {
+        targetValues.push(...matchedItems);
+      }
+    } catch (_error) {
+      errors.push('无法获取待清理数据列表');
+    }
+  } else if (cleanup.strategy === 'custom') {
+    // 自定义策略，使用本次新增的数据
+    const createdValue = resolvedValues[matchField];
+    if (createdValue) {
+      targetValues.push(createdValue);
+    }
+  }
+
+  if (targetValues.length === 0) {
+    console.log(`[数据清理] 无待清理数据`);
+    return { success: true, cleanedCount: 0, errors };
+  }
+
+  console.log(`[数据清理] 待清理数据: ${targetValues.join(', ')}`);
+
+  // 逐条执行清理
+  for (let i = 0; i < targetValues.length; i += 1) {
+    const targetValue = targetValues[i];
+
+    // 搜索定位（如果需要）
+    if (cleanup.searchBeforeCleanup !== false && task.search) {
+      const found = await searchForCleanupTarget(task, targetValue, runner);
+      if (!found) {
+        console.log(`[数据清理] 未找到"${targetValue}"，可能已被删除，跳过`);
+        continue;
+      }
+    }
+
+    // 执行清理操作
+    let result: { success: boolean; message: string };
+    if (action.actionType === 'delete') {
+      result = await executeDeleteAction(task, targetValue, action, runner);
+    } else if (action.actionType === 'custom') {
+      result = await executeCustomCleanupAction(task, targetValue, action, runner);
+    } else {
+      result = { success: false, message: `未知操作类型: ${action.actionType}` };
+    }
+
+    if (result.success) {
+      cleanedCount += 1;
+      console.log(`[数据清理] ${result.message}`);
+    } else {
+      errors.push(result.message);
+      console.error(`[数据清理] ${result.message}`);
+    }
+  }
+
+  const success = cleanup.failOnError !== true || errors.length === 0;
+  return { success, cleanedCount, errors };
 }
 
 export async function runTaskScenario(
@@ -1175,7 +1834,7 @@ export async function runTaskScenario(
       await runStep(
         '等待首页加载',
         async () => {
-          const homeText = task.navigation.homeReadyText;
+          const homeText = task.navigation!.homeReadyText!;
           const firstMenu = task.navigation?.menuPath?.[0];
           const timeoutMs = stepTimeout || 12000;
           await runner.page.waitForLoadState('domcontentloaded');
@@ -1218,13 +1877,14 @@ export async function runTaskScenario(
 
     if (task.form.dialogTitle) {
       await runStep('等待新增弹窗显示', async () => {
+        const dialogTitle = task.form.dialogTitle!;
         const visible = await waitVisibleByText(
           runner.page,
-          task.form.dialogTitle,
+          dialogTitle,
           stepTimeout || 12000,
         );
         if (!visible) {
-          throw new Error(`未检测到弹窗标题：${task.form.dialogTitle}`);
+          throw new Error(`未检测到弹窗标题：${dialogTitle}`);
         }
       });
     }
@@ -1250,9 +1910,10 @@ export async function runTaskScenario(
       await runStep(
         '检查提交提示',
         async () => {
+          const successText = task.form.successText!;
           await waitVisibleByText(
             runner.page,
-            task.form.successText,
+            successText,
             8000,
           );
         },
@@ -1313,10 +1974,35 @@ export async function runTaskScenario(
     if (task.assertions?.length) {
       for (let i = 0; i < task.assertions.length; i += 1) {
         const assertion = task.assertions[i];
-        await runStep(`业务断言_${assertion.type}_${i + 1}`, async () => {
-          await runAssertion(assertion, task, resolvedValues, runner);
-        });
+        const isSoft = assertion.soft === true;
+        await runStep(
+          `业务断言_${assertion.type}_${i + 1}`,
+          async () => {
+            await runAssertion(assertion, task, resolvedValues, runner);
+          },
+          { required: !isSoft },
+        );
       }
+    }
+
+    // 数据清理步骤（在断言完成后执行）
+    if (task.cleanup?.enabled && task.cleanup.strategy !== 'none') {
+      await runStep(
+        '数据清理',
+        async () => {
+          const cleanupResult = await runCleanup(task, resolvedValues, runner);
+          querySnapshots.cleanupResult = cleanupResult;
+          if (!cleanupResult.success && task.cleanup?.failOnError) {
+            throw new Error(
+              `数据清理失败: ${cleanupResult.errors.join('; ')}`,
+            );
+          }
+          console.log(
+            `[数据清理] 完成，清理${cleanupResult.cleanedCount}条数据`,
+          );
+        },
+        { required: task.cleanup.failOnError === true },
+      );
     }
   } catch (_error) {
     finalStatus = 'failed';

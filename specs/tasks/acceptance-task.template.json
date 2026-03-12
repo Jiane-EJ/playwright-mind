@@ -58,17 +58,41 @@
   "assertions": [
     {
       "type": "toast",
-      "expectedText": "操作成功"
+      "expectedText": "操作成功",
+      "timeoutMs": 15000,
+      "retryCount": 2,
+      "soft": false
     },
     {
       "type": "table-row-exists",
-      "matchField": "字段标签"
+      "matchField": "字段标签",
+      "timeoutMs": 10000
+    },
+    {
+      "type": "custom",
+      "description": "自定义断言描述，AI将根据此描述验证页面状态",
+      "soft": true
     }
   ],
   "cleanup": {
-    "enabled": false,
-    "strategy": "none",
-    "notes": "如需删除测试数据，请补充删除入口与确认文案"
+    "enabled": true,
+    "strategy": "delete-created",
+    "matchField": "字段标签",
+    "searchBeforeCleanup": true,
+    "failOnError": false,
+    "action": {
+      "actionType": "delete",
+      "rowButtonText": "删除",
+      "confirmDialogTitle": "确认删除",
+      "confirmButtonText": "确定",
+      "cancelButtonText": "取消",
+      "successText": "删除成功",
+      "hints": [
+        "删除按钮位于操作列",
+        "确认弹窗标题可能为提示或警告"
+      ]
+    },
+    "notes": "清理本次新增的测试数据"
   },
   "approval": {
     "approved": true,
