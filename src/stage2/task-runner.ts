@@ -29,6 +29,60 @@ type RunStepOptions = {
   required?: boolean;
 };
 
+const CAPTCHA_MODE_MANUAL = 'manual';
+const CAPTCHA_MODE_AUTO = 'auto';
+const CAPTCHA_MODE_FAIL = 'fail';
+const CAPTCHA_MODE_IGNORE = 'ignore';
+const DEFAULT_CAPTCHA_MODE = CAPTCHA_MODE_MANUAL;
+const DEFAULT_CAPTCHA_WAIT_TIMEOUT_MS = 120000;
+const CAPTCHA_CHECK_INTERVAL_MS = 1000;
+const CAPTCHA_TEXT_PATTERNS = [
+  '请完成安全验证',
+  '请按住滑块',
+  '拖动到最右边',
+  '向右滑动',
+];
+const CAPTCHA_SELECTOR_PATTERNS = [
+  '.nc_wrapper',
+  '.nc_scale',
+  '[id^="nc_"][id$="_wrapper"]',
+  '[class*="captcha"]',
+];
+
+type CaptchaMode =
+  | typeof CAPTCHA_MODE_MANUAL
+  | typeof CAPTCHA_MODE_AUTO
+  | typeof CAPTCHA_MODE_FAIL
+  | typeof CAPTCHA_MODE_IGNORE;
+
+function resolveCaptchaMode(): CaptchaMode {
+  const value = (process.env.STAGE2_CAPTCHA_MODE || DEFAULT_CAPTCHA_MODE)
+    .trim()
+    .toLowerCase();
+  if (value === CAPTCHA_MODE_AUTO) {
+    return CAPTCHA_MODE_AUTO;
+  }
+  if (value === CAPTCHA_MODE_FAIL) {
+    return CAPTCHA_MODE_FAIL;
+  }
+  if (value === CAPTCHA_MODE_IGNORE) {
+    return CAPTCHA_MODE_IGNORE;
+  }
+  return CAPTCHA_MODE_MANUAL;
+}
+
+function resolveCaptchaWaitTimeoutMs(): number {
+  const rawValue = process.env.STAGE2_CAPTCHA_WAIT_TIMEOUT_MS;
+  if (!rawValue) {
+    return DEFAULT_CAPTCHA_WAIT_TIMEOUT_MS;
+  }
+  const parsedValue = Number(rawValue);
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+    return DEFAULT_CAPTCHA_WAIT_TIMEOUT_MS;
+  }
+  return Math.floor(parsedValue);
+}
+
 function toDisplayValue(value: string | string[]): string {
   if (Array.isArray(value)) {
     return value.join('/');
@@ -409,6 +463,245 @@ async function waitVisibleByText(
   }
 }
 
+async function isLocatorVisible(locator: Locator): Promise<boolean> {
+  try {
+    const count = await locator.count();
+    for (let i = 0; i < count; i += 1) {
+      if (await locator.nth(i).isVisible()) {
+        return true;
+      }
+    }
+  } catch (_error) {
+    return false;
+  }
+  return false;
+}
+
+async function detectCaptchaChallenge(page: Page): Promise<boolean> {
+  for (let i = 0; i < CAPTCHA_TEXT_PATTERNS.length; i += 1) {
+    const pattern = CAPTCHA_TEXT_PATTERNS[i];
+    if (
+      await isLocatorVisible(
+        page.getByText(pattern, { exact: false }).first(),
+      )
+    ) {
+      return true;
+    }
+  }
+  for (let i = 0; i < CAPTCHA_SELECTOR_PATTERNS.length; i += 1) {
+    const selector = CAPTCHA_SELECTOR_PATTERNS[i];
+    if (await isLocatorVisible(page.locator(selector))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+type SliderPosition = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+async function querySliderPosition(
+  runner: RunnerContext,
+): Promise<SliderPosition | null> {
+  try {
+    const result = await runner.aiQuery<{
+      found: boolean;
+      x?: number;
+      y?: number;
+      width?: number;
+      height?: number;
+    }>(`
+分析当前页面是否存在滑块验证码。
+如果存在，返回滑块按钮的位置信息（中心点坐标和尺寸）。
+返回格式：{ found: boolean, x: number, y: number, width: number, height: number }
+其中 x,y 是滑块按钮中心点的屏幕坐标。
+`);
+    if (result && result.found && result.x !== undefined && result.y !== undefined) {
+      return {
+        x: result.x,
+        y: result.y,
+        width: result.width || 40,
+        height: result.height || 40,
+      };
+    }
+  } catch (_error) {
+    // 忽略AI查询错误
+  }
+  return null;
+}
+
+async function querySliderTrackWidth(
+  runner: RunnerContext,
+): Promise<number | null> {
+  try {
+    const result = await runner.aiQuery<{
+      found: boolean;
+      width?: number;
+    }>(`
+分析当前页面的滑块验证码滑槽宽度。
+返回格式：{ found: boolean, width: number }
+width 是滑槽的总宽度（像素）。
+`);
+    if (result && result.found && result.width !== undefined && result.width > 0) {
+      return result.width;
+    }
+  } catch (_error) {
+    // 忽略AI查询错误
+  }
+  return null;
+}
+
+async function autoSolveSliderCaptcha(runner: RunnerContext): Promise<boolean> {
+  console.log('[滑块自动处理] 开始检测滑块位置...');
+
+  const sliderPos = await querySliderPosition(runner);
+  if (!sliderPos) {
+    console.log('[滑块自动处理] 未检测到滑块位置');
+    return false;
+  }
+
+  console.log(`[滑块自动处理] 检测到滑块位置: x=${sliderPos.x}, y=${sliderPos.y}`);
+
+  const trackWidth = await querySliderTrackWidth(runner);
+  const targetX = trackWidth ? sliderPos.x + trackWidth - 50 : sliderPos.x + 250;
+
+  console.log(`[滑块自动处理] 目标位置: x=${targetX}, y=${sliderPos.y}`);
+  console.log('[滑块自动处理] 开始模拟拖动...');
+
+  const page = runner.page;
+
+  try {
+    // 先等待一下确保页面稳定
+    await page.waitForTimeout(500);
+
+    // 移动到滑块起始位置
+    await page.mouse.move(sliderPos.x, sliderPos.y);
+    await page.waitForTimeout(200);
+
+    // 按下鼠标
+    await page.mouse.down();
+    await page.waitForTimeout(300);
+
+    // 模拟真人拖动轨迹：先快后慢，带小幅抖动
+    const totalDistance = targetX - sliderPos.x;
+    const steps = 15;
+    let currentX = sliderPos.x;
+
+    for (let i = 1; i <= steps; i++) {
+      const progress = i / steps;
+      // 使用 easeOut 缓动函数：先快后慢
+      const easeOut = 1 - Math.pow(1 - progress, 2);
+      const targetStepX = sliderPos.x + totalDistance * easeOut;
+
+      // 添加小幅随机抖动（-3 到 3 像素）
+      const jitterX = (Math.random() - 0.5) * 6;
+      const jitterY = (Math.random() - 0.5) * 4;
+
+      currentX = Math.round(targetStepX + jitterX);
+      const currentY = Math.round(sliderPos.y + jitterY);
+
+      await page.mouse.move(currentX, currentY);
+      // 随机延迟 30-80ms
+      await page.waitForTimeout(30 + Math.random() * 50);
+    }
+
+    // 确保到达目标位置
+    await page.mouse.move(targetX, sliderPos.y);
+    await page.waitForTimeout(200);
+
+    // 释放鼠标
+    await page.mouse.up();
+    await page.waitForTimeout(500);
+
+    console.log('[滑块自动处理] 拖动完成，等待验证结果...');
+
+    // 等待并检查滑块是否消失
+    await page.waitForTimeout(2000);
+    const stillFound = await detectCaptchaChallenge(page);
+
+    if (!stillFound) {
+      console.log('[滑块自动处理] 滑块验证成功');
+      await page.waitForLoadState('domcontentloaded');
+      await page.waitForTimeout(500);
+      return true;
+    }
+
+    console.log('[滑块自动处理] 滑块验证可能失败，滑块仍然存在');
+    return false;
+  } catch (error) {
+    console.error('[滑块自动处理] 拖动过程出错:', error);
+    // 确保鼠标释放
+    try {
+      await page.mouse.up();
+    } catch (_e) {
+      // 忽略
+    }
+    return false;
+  }
+}
+
+async function handleCaptchaChallengeIfNeeded(
+  runner: RunnerContext,
+): Promise<void> {
+  const mode = resolveCaptchaMode();
+  if (mode === CAPTCHA_MODE_IGNORE) {
+    return;
+  }
+  const found = await detectCaptchaChallenge(runner.page);
+  if (!found) {
+    return;
+  }
+  if (mode === CAPTCHA_MODE_FAIL) {
+    throw new Error(
+      '检测到滑块/安全验证，当前配置 STAGE2_CAPTCHA_MODE=fail，不允许继续执行。',
+    );
+  }
+
+  // 自动模式：尝试使用AI+Playwright自动处理滑块
+  if (mode === CAPTCHA_MODE_AUTO) {
+    console.log('[安全验证] 检测到滑块，使用自动模式处理...');
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      console.log(`[安全验证] 自动处理尝试 ${attempt}/${maxAttempts}`);
+      const solved = await autoSolveSliderCaptcha(runner);
+      if (solved) {
+        console.log('[安全验证] 自动处理成功');
+        return;
+      }
+      if (attempt < maxAttempts) {
+        console.log('[安全验证] 自动处理失败，等待后重试...');
+        await runner.page.waitForTimeout(2000);
+      }
+    }
+    throw new Error(
+      `滑块自动处理失败，已尝试${maxAttempts}次。建议：1) 检查页面截图确认滑块样式 2) 调整为 manual 模式人工处理 3) 调整滑块检测选择器`,
+    );
+  }
+
+  // 人工兜底模式（默认）
+  const timeoutMs = resolveCaptchaWaitTimeoutMs();
+  const deadline = Date.now() + timeoutMs;
+  console.warn(
+    `检测到滑块/安全验证，请手动完成；系统将在 ${timeoutMs}ms 内持续等待验证消失。`,
+  );
+  while (Date.now() < deadline) {
+    const stillFound = await detectCaptchaChallenge(runner.page);
+    if (!stillFound) {
+      await runner.page.waitForLoadState('domcontentloaded');
+      await runner.page.waitForTimeout(500);
+      return;
+    }
+    await runner.page.waitForTimeout(CAPTCHA_CHECK_INTERVAL_MS);
+  }
+  throw new Error(
+    `滑块/安全验证在 ${timeoutMs}ms 内未完成，任务终止。可调整 STAGE2_CAPTCHA_WAIT_TIMEOUT_MS 增大等待时间。`,
+  );
+}
+
 async function openCascaderPanel(
   fieldLabel: string,
   task: AcceptanceTask,
@@ -570,6 +863,7 @@ async function clickMenuWithFallback(
   menuHints: string,
   runner: RunnerContext,
 ): Promise<void> {
+  await handleCaptchaChallengeIfNeeded(runner);
   const escaped = escapeRegExp(menuName);
   const clickedByRoleLink = await tryClickLocator(
     runner.page.getByRole('link', { name: new RegExp(`^\\s*${escaped}\\s*$`) }),
@@ -871,6 +1165,10 @@ export async function runTaskScenario(
       await runner.ai(
         `请在登录页完成登录：账号输入“${task.account.username}”，密码输入“${task.account.password}”，点击登录。${hints}`,
       );
+    });
+
+    await runStep('处理安全验证', async () => {
+      await handleCaptchaChallengeIfNeeded(runner);
     });
 
     if (task.navigation?.homeReadyText) {

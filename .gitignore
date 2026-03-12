@@ -1,25 +1,4 @@
 node_modules/
-/test-results/
-/playwright-report/
-/blob-report/
-/playwright/.cache/
-/t_runtime/
-/t_test-results/
-/t_playwright-report/
-/t_acceptance-results/
-
-# Midscene.js dump files
-midscene_run/report
-midscene_run/dump
-midscene_run/tmp
-midscene_run/cache
-t_midscene_run/report
-t_midscene_run/dump
-t_midscene_run/tmp
-t_midscene_run/cache
-t_runtime/midscene_run/report
-t_runtime/midscene_run/dump
-t_runtime/midscene_run/tmp
-t_runtime/midscene_run/cache
-
+/t_runtime
 .env
+.vscode/

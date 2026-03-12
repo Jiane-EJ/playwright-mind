@@ -47,7 +47,29 @@ MIDSCENE_RUN_DIR=t_runtime/midscene_run
 ACCEPTANCE_RESULT_DIR=t_runtime/acceptance-results
 STAGE2_TASK_FILE=specs/tasks/acceptance-task.community-create.example.json
 STAGE2_REQUIRE_APPROVAL=false
+STAGE2_CAPTCHA_MODE=auto
+STAGE2_CAPTCHA_WAIT_TIMEOUT_MS=120000
 ```
+
+`STAGE2_CAPTCHA_MODE` 说明：
+* `auto`：**AI 自动处理滑块**（默认）。使用 Midscene AI 分析截图获取滑块位置，Playwright 模拟真人拖动轨迹
+* `manual`：检测到滑块/安全验证后，等待人工完成，再继续执行
+* `fail`：检测到滑块/安全验证立即失败
+* `ignore`：忽略滑块检测（不建议）
+
+`STAGE2_CAPTCHA_WAIT_TIMEOUT_MS`：`manual` 模式下人工处理等待时长（毫秒）。
+
+### 滑块验证码自动处理
+
+当 `STAGE2_CAPTCHA_MODE=auto` 时，系统会自动处理登录页的滑块验证码：
+
+1. **AI 识别**：使用 Midscene `aiQuery` 分析页面截图，识别滑块按钮位置和滑槽宽度
+2. **模拟拖动**：使用 Playwright `mouse` API 模拟真人拖动
+   - 15步渐进拖动，easeOut 缓动（先快后慢）
+   - 添加随机抖动（-3~3像素）模拟人手轨迹
+3. **结果验证**：检查滑块是否消失，最多重试 3 次
+
+自动处理失败时会抛出明确错误，可切换为 `manual` 模式人工处理。
 
 ## 运行产物目录
 
@@ -118,3 +140,4 @@ npm run stage2:run:headed
 | 任务输入 JSON 模板 | 已完成模板 | 见 `specs/tasks/` |
 | 第二段最小执行器（JSON 驱动） | 已完成 | 入口 `tests/generated/stage2-acceptance-runner.spec.ts` |
 | 目录结构整理（运行产物收敛） | 已完成 | 运行目录统一归档到 `t_runtime/` |
+| 登录滑块验证码自动处理 | 已完成 | AI + Playwright 自动识别并拖动滑块 |
