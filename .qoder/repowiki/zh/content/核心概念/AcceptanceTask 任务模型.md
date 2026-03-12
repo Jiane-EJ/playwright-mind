@@ -12,17 +12,25 @@
 - [package.json](file://package.json)
 </cite>
 
+## 更新摘要
+**变更内容**
+- 新增软断言机制说明，支持 `soft` 字段控制断言失败是否中断流程
+- 更新断言策略优化：从全面验证转向关键字段软断言模式
+- 强调 `table-row-exists` 作为硬门槛，`table-cell-equals`/`table-cell-contains` 作为关键列软验证
+- 新增断言执行器中的软断言处理逻辑说明
+
 ## 目录
 1. [简介](#简介)
 2. [项目结构](#项目结构)
 3. [核心组件](#核心组件)
 4. [架构总览](#架构总览)
 5. [详细组件分析](#详细组件分析)
-6. [依赖关系分析](#依赖关系分析)
-7. [性能考量](#性能考量)
-8. [故障排查指南](#故障排查指南)
-9. [结论](#结论)
-10. [附录](#附录)
+6. [断言策略优化](#断言策略优化)
+7. [依赖关系分析](#依赖关系分析)
+8. [性能考量](#性能考量)
+9. [故障排查指南](#故障排查指南)
+10. [结论](#结论)
+11. [附录](#附录)
 
 ## 简介
 本文件面向 HI-TEST 项目的 AcceptanceTask 任务模型，系统性阐述任务模型的结构、字段语义、数据类型、验证规则与最佳实践。重点覆盖：
@@ -30,6 +38,7 @@
 - TaskField 字段的类型、值来源与验证策略
 - TaskForm 表单字段组织方式
 - StepResult 步骤执行结果记录
+- **软断言机制与关键字段验证策略**
 - JSON 任务模板与示例
 - 运行时配置与环境变量
 - 实际执行流程与断言机制
@@ -73,21 +82,21 @@ C --> R
 E --> R
 ```
 
-图表来源
-- [src/stage2/types.ts](file://src/stage2/types.ts#L1-L125)
+**图表来源**
+- [src/stage2/types.ts](file://src/stage2/types.ts#L1-L180)
 - [src/stage2/task-loader.ts](file://src/stage2/task-loader.ts#L1-L91)
-- [src/stage2/task-runner.ts](file://src/stage2/task-runner.ts#L1-L1344)
-- [specs/tasks/acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L1-L85)
-- [specs/tasks/acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L1-L184)
+- [src/stage2/task-runner.ts](file://src/stage2/task-runner.ts#L1-L2657)
+- [specs/tasks/acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L1-L141)
+- [specs/tasks/acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L1-L229)
 - [config/runtime-path.ts](file://config/runtime-path.ts#L1-L41)
 - [tests/generated/stage2-acceptance-runner.spec.ts](file://tests/generated/stage2-acceptance-runner.spec.ts#L1-L39)
 
-章节来源
-- [src/stage2/types.ts](file://src/stage2/types.ts#L1-L125)
+**章节来源**
+- [src/stage2/types.ts](file://src/stage2/types.ts#L1-L180)
 - [src/stage2/task-loader.ts](file://src/stage2/task-loader.ts#L1-L91)
-- [src/stage2/task-runner.ts](file://src/stage2/task-runner.ts#L1-L1344)
-- [specs/tasks/acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L1-L85)
-- [specs/tasks/acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L1-L184)
+- [src/stage2/task-runner.ts](file://src/stage2/task-runner.ts#L1-L2657)
+- [specs/tasks/acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L1-L141)
+- [specs/tasks/acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L1-L229)
 - [config/runtime-path.ts](file://config/runtime-path.ts#L1-L41)
 - [tests/generated/stage2-acceptance-runner.spec.ts](file://tests/generated/stage2-acceptance-runner.spec.ts#L1-L39)
 
@@ -175,7 +184,7 @@ E --> R
   - errorStack?: string
     - 错误堆栈
 
-章节来源
+**章节来源**
 - [src/stage2/types.ts](file://src/stage2/types.ts#L23-L109)
 - [specs/tasks/acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L35-L46)
 - [specs/tasks/acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L29-L102)
@@ -228,8 +237,8 @@ end
 Runner-->>Test : 返回执行结果包含步骤与截图
 ```
 
-图表来源
-- [src/stage2/task-runner.ts](file://src/stage2/task-runner.ts#L1062-L1343)
+**图表来源**
+- [src/stage2/task-runner.ts](file://src/stage2/task-runner.ts#L2599-L2631)
 - [src/stage2/task-loader.ts](file://src/stage2/task-loader.ts#L79-L89)
 - [src/stage2/types.ts](file://src/stage2/types.ts#L86-L123)
 - [tests/generated/stage2-acceptance-runner.spec.ts](file://tests/generated/stage2-acceptance-runner.spec.ts#L12-L37)
@@ -270,11 +279,11 @@ Runner-->>Test : 返回执行结果包含步骤与截图
 - approval
   - approved/approvedBy/approvedAt: 可选；审批信息
 
-章节来源
+**章节来源**
 - [src/stage2/types.ts](file://src/stage2/types.ts#L86-L98)
 - [src/stage2/task-loader.ts](file://src/stage2/task-loader.ts#L50-L69)
-- [specs/tasks/acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L1-L85)
-- [specs/tasks/acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L1-L184)
+- [specs/tasks/acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L1-L141)
+- [specs/tasks/acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L1-L229)
 
 ### TaskField 字段类型、值来源与验证规则
 - 字段类型与值来源
@@ -314,12 +323,12 @@ PathOK --> |否| Retry["重试/抛错"]
 Next --> End(["结束"])
 ```
 
-图表来源
+**图表来源**
 - [src/stage2/task-runner.ts](file://src/stage2/task-runner.ts#L894-L971)
 - [src/stage2/task-runner.ts](file://src/stage2/task-runner.ts#L907-L941)
 - [src/stage2/task-runner.ts](file://src/stage2/task-runner.ts#L204-L225)
 
-章节来源
+**章节来源**
 - [src/stage2/task-runner.ts](file://src/stage2/task-runner.ts#L894-L971)
 - [src/stage2/task-runner.ts](file://src/stage2/task-runner.ts#L907-L941)
 - [src/stage2/task-runner.ts](file://src/stage2/task-runner.ts#L204-L225)
@@ -330,7 +339,7 @@ Next --> End(["结束"])
 - openButtonText/submitButtonText/closeButtonText/successText 作为 UI 文案线索，提升自动化稳定性
 - notes 提供额外说明，便于维护与理解
 
-章节来源
+**章节来源**
 - [src/stage2/types.ts](file://src/stage2/types.ts#L32-L40)
 - [specs/tasks/acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L29-L41)
 
@@ -339,44 +348,68 @@ Next --> End(["结束"])
 - screenshotPath/message/errorStack：失败时的诊断信息
 - 执行器在每个步骤结束后写入进度文件，最终汇总为执行结果
 
-章节来源
+**章节来源**
 - [src/stage2/types.ts](file://src/stage2/types.ts#L100-L109)
 - [src/stage2/task-runner.ts](file://src/stage2/task-runner.ts#L1110-L1155)
 
-### 断言机制与业务规则
-- 断言类型与行为
-  - toast：等待页面出现指定提示文本
-  - table-row-exists：断言列表中存在某条数据行
-  - table-cell-equals：断言某行的多个列值与预期一致
-  - table-cell-contains：断言某行某列包含期望值
+## 断言策略优化
+
+### 软断言机制与关键字段验证
+**更新** 本节介绍最新的断言策略优化，从全面验证转向关键字段软断言模式。
+
+- 软断言机制
+  - `soft` 字段：当设置为 `true` 时，断言失败不会中断整个任务流程
+  - 默认值：`false`，即断言失败会中断流程
+  - 适用场景：非关键业务验证、容错性要求较高的场景
+- 硬门槛策略
+  - `table-row-exists`：作为硬门槛断言，必须通过才能继续后续步骤
+  - 作用：确保目标数据行确实存在，防止后续关键字段断言因数据不存在而失败
+  - 失败处理：硬门槛失败会直接中断任务执行
+- 关键字段软验证
+  - `table-cell-equals`：严格比较关键列值，失败不影响整体流程
+  - `table-cell-contains`：检查关键列包含关系，失败不影响整体流程
+  - 作用：验证业务关键字段的正确性，同时保持流程的容错性
+
+### 断言执行器中的软断言处理
+在 `runAssertion` 函数中实现了软断言的执行逻辑：
+
+```mermaid
+flowchart TD
+Start(["开始断言执行"]) --> CheckSoft{"断言是否软断言？"}
+CheckSoft --> |是| ExecuteSoft["执行软断言"]
+CheckSoft --> |否| ExecuteHard["执行硬断言"]
+ExecuteSoft --> SoftPass{"断言通过？"}
+SoftPass --> |是| Continue["继续执行后续步骤"]
+SoftPass --> |否| LogWarning["记录警告并继续执行"]
+LogWarning --> Continue
+ExecuteHard --> HardPass{"断言通过？"}
+HardPass --> |是| Continue
+HardPass --> |否| FailTask["中断任务执行"]
+Continue --> End(["结束"])
+FailTask --> End
+```
+
+**图表来源**
+- [src/stage2/task-runner.ts](file://src/stage2/task-runner.ts#L2600-L2611)
+
+### 断言类型与行为
+- toast：等待页面出现指定提示文本
+- table-row-exists：断言列表中存在某条数据行（硬门槛）
+- table-cell-equals：断言某行的多个列值与预期一致（关键字段软验证）
+- table-cell-contains：断言某行某列包含期望值（关键字段软验证）
+- custom：自定义描述断言，通过 AI 进行验证
 - 保底策略：未知断言类型时，直接将断言 JSON 序列化为自然语言指令交由 AI 执行
-- 业务规则最佳实践
-  - 使用 matchField 对应 TaskForm.fields 中的 label，确保断言基于已解析的值
-  - 对 table-cell-contains，明确 column 与 expectedFromField 的映射关系
 
-章节来源
-- [src/stage2/types.ts](file://src/stage2/types.ts#L58-L65)
-- [src/stage2/task-runner.ts](file://src/stage2/task-runner.ts#L1020-L1060)
+### 业务规则最佳实践
+- 使用 matchField 对应 TaskForm.fields 中的 label，确保断言基于已解析的值
+- 对 table-cell-contains，明确 column 与 expectedFromField 的映射关系
+- 合理使用 soft 字段：将非关键业务验证设为软断言，关键业务验证保持硬断言
+- table-row-exists 应作为第一个断言，确保后续关键字段断言有数据基础
 
-### 运行时配置与环境变量
-- 运行时参数
-  - stepTimeoutMs/pageTimeoutMs：步骤与页面超时
-  - screenshotOnStep：每步截图开关
-  - trace：开启 trace
-- 环境变量
-  - STAGE2_TASK_FILE：指定任务文件路径
-  - STAGE2_REQUIRE_APPROVAL：是否要求审批后执行
-  - STAGE2_CAPTCHA_MODE：滑块处理模式（manual/auto/fail/ignore）
-  - STAGE2_CAPTCHA_WAIT_TIMEOUT_MS：滑块等待超时
-  - RUNTIME_DIR_PREFIX/ACCEPTANCE_RESULT_DIR：运行时目录前缀与验收结果目录
-  - PLAYWRIGHT_OUTPUT_DIR/PLAYWRIGHT_HTML_REPORT_DIR/MIDSCENE_RUN_DIR：其他输出目录
-  - 其他环境变量：用于模板解析（如 TEST_USERNAME、TEST_PASSWORD）
-
-章节来源
-- [src/stage2/task-runner.ts](file://src/stage2/task-runner.ts#L58-L84)
-- [config/runtime-path.ts](file://config/runtime-path.ts#L8-L40)
-- [src/stage2/task-loader.ts](file://src/stage2/task-loader.ts#L19-L31)
-- [package.json](file://package.json#L6-L9)
+**章节来源**
+- [src/stage2/types.ts](file://src/stage2/types.ts#L67-L88)
+- [src/stage2/task-runner.ts](file://src/stage2/task-runner.ts#L1562-L1895)
+- [src/stage2/task-runner.ts](file://src/stage2/task-runner.ts#L2600-L2611)
 
 ## 依赖关系分析
 - 类型依赖
@@ -397,16 +430,16 @@ Config["runtime-path.ts"] --> Runner
 Spec["stage2-acceptance-runner.spec.ts"] --> Runner
 ```
 
-图表来源
-- [src/stage2/types.ts](file://src/stage2/types.ts#L1-L125)
-- [src/stage2/task-runner.ts](file://src/stage2/task-runner.ts#L1-L1344)
+**图表来源**
+- [src/stage2/types.ts](file://src/stage2/types.ts#L1-L180)
+- [src/stage2/task-runner.ts](file://src/stage2/task-runner.ts#L1-L2657)
 - [src/stage2/task-loader.ts](file://src/stage2/task-loader.ts#L1-L91)
 - [config/runtime-path.ts](file://config/runtime-path.ts#L1-L41)
 - [tests/generated/stage2-acceptance-runner.spec.ts](file://tests/generated/stage2-acceptance-runner.spec.ts#L1-L39)
 
-章节来源
-- [src/stage2/types.ts](file://src/stage2/types.ts#L1-L125)
-- [src/stage2/task-runner.ts](file://src/stage2/task-runner.ts#L1-L1344)
+**章节来源**
+- [src/stage2/types.ts](file://src/stage2/types.ts#L1-L180)
+- [src/stage2/task-runner.ts](file://src/stage2/task-runner.ts#L1-L2657)
 - [src/stage2/task-loader.ts](file://src/stage2/task-loader.ts#L1-L91)
 - [config/runtime-path.ts](file://config/runtime-path.ts#L1-L41)
 - [tests/generated/stage2-acceptance-runner.spec.ts](file://tests/generated/stage2-acceptance-runner.spec.ts#L1-L39)
@@ -420,6 +453,9 @@ Spec["stage2-acceptance-runner.spec.ts"] --> Runner
   - 提交失败时的自动修复会多次尝试，注意网络与页面稳定性
 - 级联字段
   - 级联选择涉及多次点击与等待，建议提供明确的 hints 与 dialogTitle，减少定位成本
+- **软断言性能**
+  - 软断言不会中断流程，适合大量非关键验证，提升整体执行效率
+  - 硬断言失败会立即中断，确保关键业务验证的可靠性
 
 ## 故障排查指南
 - 任务文件缺失字段
@@ -432,10 +468,12 @@ Spec["stage2-acceptance-runner.spec.ts"] --> Runner
   - 级联字段需确保层级数组与 UI 展示一致
 - 断言失败
   - 确认 matchField 与 resolvedValues 中的键一致；table-cell-contains 需要明确 column 与 expectedFromField
+  - **软断言失败**：检查 soft 字段设置，确认断言类型是否应该软断言
+  - **硬门槛失败**：优先检查 table-row-exists 断言，确保数据确实存在
 - 结果文件与截图
   - 执行结果包含 result.json 与 screenshots 目录，失败步骤会附带截图路径，便于定位问题
 
-章节来源
+**章节来源**
 - [src/stage2/task-loader.ts](file://src/stage2/task-loader.ts#L50-L69)
 - [src/stage2/task-runner.ts](file://src/stage2/task-runner.ts#L647-L703)
 - [src/stage2/task-runner.ts](file://src/stage2/task-runner.ts#L973-L1018)
@@ -443,25 +481,64 @@ Spec["stage2-acceptance-runner.spec.ts"] --> Runner
 - [tests/generated/stage2-acceptance-runner.spec.ts](file://tests/generated/stage2-acceptance-runner.spec.ts#L27-L36)
 
 ## 结论
-AcceptanceTask 任务模型通过清晰的接口定义与严格的加载校验，提供了可维护、可扩展的验收测试框架。配合模板解析、AI 驱动的 UI 操作与断言，能够高效地覆盖复杂业务流程。建议在实际使用中：
+AcceptanceTask 任务模型通过清晰的接口定义与严格的加载校验，提供了可维护、可扩展的验收测试框架。配合模板解析、AI 驱动的 UI 操作与断言，能够高效地覆盖复杂业务流程。
+
+**最新优化**：断言策略从全面验证转向关键字段软断言模式，通过 `soft` 字段实现灵活的断言控制，`table-row-exists` 作为硬门槛确保数据存在性，`table-cell-equals`/`table-cell-contains` 作为关键列软验证保障业务关键字段正确性。
+
+建议在实际使用中：
 - 明确字段语义与必填性，合理使用 unique 策略
 - 提供充分的 hints 与 dialogTitle，提升定位稳定性
 - 合理配置运行时参数，平衡性能与可观测性
 - 在断言中明确字段映射关系，确保可读性与可维护性
+- **合理使用软断言**：将非关键业务验证设为软断言，关键业务验证保持硬断言
 
 ## 附录
 
 ### TypeScript 类型定义示例（路径引用）
 以下为关键类型的定义位置，便于查阅与对比：
-- AcceptanceTask 定义：[src/stage2/types.ts](file://src/stage2/types.ts#L86-L98)
+- AcceptanceTask 定义：[src/stage2/types.ts](file://src/stage2/types.ts#L141-L154)
 - TaskField 定义：[src/stage2/types.ts](file://src/stage2/types.ts#L23-L30)
 - TaskForm 定义：[src/stage2/types.ts](file://src/stage2/types.ts#L32-L40)
-- StepResult 定义：[src/stage2/types.ts](file://src/stage2/types.ts#L100-L109)
+- StepResult 定义：[src/stage2/types.ts](file://src/stage2/types.ts#L156-L165)
+- **TaskAssertion 定义**：[src/stage2/types.ts](file://src/stage2/types.ts#L67-L88)
 
 ### JSON 任务模板与示例（路径引用）
-- 任务模板：[specs/tasks/acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L1-L85)
-- 社区创建示例：[specs/tasks/acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L1-L184)
+- 任务模板：[specs/tasks/acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L1-L141)
+- 社区创建示例：[specs/tasks/acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L1-L229)
 
 ### 运行与脚本（路径引用）
 - 运行脚本：[package.json](file://package.json#L6-L9)
 - 测试入口：[tests/generated/stage2-acceptance-runner.spec.ts](file://tests/generated/stage2-acceptance-runner.spec.ts#L1-L39)
+
+### 断言策略配置示例
+**软断言配置**：
+```json
+{
+  "type": "toast",
+  "expectedText": "操作成功",
+  "soft": true
+}
+```
+
+**硬门槛配置**：
+```json
+{
+  "type": "table-row-exists",
+  "matchField": "小区名称",
+  "timeoutMs": 10000
+}
+```
+
+**关键字段软验证配置**：
+```json
+{
+  "type": "table-cell-equals",
+  "matchField": "小区名称",
+  "expectedColumns": ["小区名称", "负责人"],
+  "expectedColumnFromFields": {
+    "小区名称": "小区名称",
+    "负责人": "负责人"
+  },
+  "soft": true
+}
+```
