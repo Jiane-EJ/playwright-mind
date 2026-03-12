@@ -148,6 +148,7 @@ npm run db:migrate
 * 断言优先使用 **Playwright 硬检测**（`getByRole/getByLabel/getByTestId` + 自动重试断言）
 * 语义复杂场景优先使用 **`aiQuery + 代码断言`**，减少 `aiAssert` 幻觉风险
 * `table-cell-equals` / `table-cell-contains` 会优先尝试 **Playwright 表格列值提取与代码比对**，失败后再降级到 AI 结构化断言
+* 最终验收建议以 `table-row-exists` 作为硬门槛；`table-cell-equals` / `table-cell-contains` 只校验少量关键列，且建议配置 `soft=true`
 * AI 操作作为兜底，不建议所有步骤都直接依赖自由文本 AI 操作
 
 ## 运行测试

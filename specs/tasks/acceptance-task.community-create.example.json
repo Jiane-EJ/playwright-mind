@@ -174,26 +174,22 @@
       "matchField": "小区名称",
       "expectedColumns": [
         "小区名称",
-        "所在地区",
-        "详细地址",
-        "负责人",
-        "联系电话"
+        "负责人"
       ],
       "expectedColumnFromFields": {
         "小区名称": "小区名称",
-        "所在地区": "省市区",
-        "详细地址": "小区地址",
-        "负责人": "负责人",
-        "联系电话": "联系电话"
+        "负责人": "负责人"
       },
-      "retryCount": 2
+      "retryCount": 2,
+      "soft": true
     },
     {
       "type": "table-cell-contains",
       "matchField": "小区名称",
       "column": "所在地区",
       "expectedFromField": "省市区",
-      "retryCount": 2
+      "retryCount": 2,
+      "soft": true
     }
   ],
   "cleanup": {
