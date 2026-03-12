@@ -11,6 +11,13 @@
 - [login-e2e.md](file://specs/login-e2e.md)
 </cite>
 
+## 更新摘要
+**变更内容**
+- 新增断言配置的详细说明，包括 timeoutMs、retryCount、soft 标志等新选项
+- 新增清理配置的完整说明，包括 enabled、strategy、matchField、action 等新字段
+- 更新了断言和清理配置的实际应用示例
+- 增强了字段值格式和约束的详细说明
+
 ## 目录
 1. [简介](#简介)
 2. [项目结构](#项目结构)
@@ -24,7 +31,7 @@
 10. [附录](#附录)
 
 ## 简介
-本规范文档面向 HI-TEST 的第二段执行器（Stage2），系统性阐述“任务 JSON”的完整结构与语法规则，覆盖必需字段与可选字段、字段值格式与约束、字段间逻辑关系与依赖规则，并给出 JSON Schema 定义与验证建议、示例与最佳实践，帮助使用者正确编写符合规范的任务 JSON 文件。
+本规范文档面向 HI-TEST 的第二段执行器（Stage2），系统性阐述"任务 JSON"的完整结构与语法规则，覆盖必需字段与可选字段、字段值格式与约束、字段间逻辑关系与依赖规则，并给出 JSON Schema 定义与验证建议、示例与最佳实践，帮助使用者正确编写符合规范的任务 JSON 文件。
 
 ## 项目结构
 - 任务 JSON 示例与模板位于 specs/tasks 目录，包含通用模板与一个业务场景示例。
@@ -52,20 +59,20 @@ TYPES --> RUNNER
 PKG --> RUNNER
 ```
 
-图表来源
-- [acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L1-L85)
-- [acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L1-L184)
-- [types.ts](file://src/stage2/types.ts#L1-L125)
+**图表来源**
+- [acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L1-L129)
+- [acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L1-L233)
+- [types.ts](file://src/stage2/types.ts#L1-L180)
 - [task-loader.ts](file://src/stage2/task-loader.ts#L1-L91)
-- [task-runner.ts](file://src/stage2/task-runner.ts#L1-L1344)
+- [task-runner.ts](file://src/stage2/task-runner.ts#L1-L2286)
 - [package.json](file://package.json#L6-L9)
 
-章节来源
-- [acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L1-L85)
-- [acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L1-L184)
-- [types.ts](file://src/stage2/types.ts#L1-L125)
+**章节来源**
+- [acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L1-L129)
+- [acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L1-L233)
+- [types.ts](file://src/stage2/types.ts#L1-L180)
 - [task-loader.ts](file://src/stage2/task-loader.ts#L1-L91)
-- [task-runner.ts](file://src/stage2/task-runner.ts#L1-L1344)
+- [task-runner.ts](file://src/stage2/task-runner.ts#L1-L2286)
 - [package.json](file://package.json#L6-L9)
 
 ## 核心组件
@@ -73,10 +80,10 @@ PKG --> RUNNER
 - 任务加载器：负责解析任务文件、注入环境变量与动态值（如时间戳）、进行基础形状校验。
 - 任务执行器：按步骤驱动 Playwright/AI 完成登录、菜单导航、表单填写、提交、搜索与断言等全流程。
 
-章节来源
-- [types.ts](file://src/stage2/types.ts#L86-L98)
+**章节来源**
+- [types.ts](file://src/stage2/types.ts#L141-L154)
 - [task-loader.ts](file://src/stage2/task-loader.ts#L50-L89)
-- [task-runner.ts](file://src/stage2/task-runner.ts#L1062-L1344)
+- [task-runner.ts](file://src/stage2/task-runner.ts#L1-L2286)
 
 ## 架构概览
 任务 JSON 从加载器进入执行器，执行器依据 JSON 字段驱动页面交互与断言，最终输出结构化执行结果。
@@ -98,12 +105,13 @@ Runner->>Page : 菜单导航按 navigation
 Runner->>Page : 打开弹窗并填写表单按 form
 Runner->>Page : 提交并处理校验提示
 Runner->>Page : 搜索与断言按 search/assertions
+Runner->>Page : 执行清理按 cleanup
 Runner-->>CLI : 输出执行结果
 ```
 
-图表来源
+**图表来源**
 - [task-loader.ts](file://src/stage2/task-loader.ts#L79-L89)
-- [task-runner.ts](file://src/stage2/task-runner.ts#L1157-L1320)
+- [task-runner.ts](file://src/stage2/task-runner.ts#L1877-L1899)
 
 ## 详细组件分析
 
@@ -114,18 +122,19 @@ Runner-->>CLI : 输出执行结果
   - target: 必需，对象，包含 url、browser、headless。
   - account: 必需，对象，包含 username、password、loginHints。
   - navigation: 可选，对象，包含 homeReadyText、menuPath、menuHints。
+  - uiProfile: 可选，对象，包含 tableRowSelectors、toastSelectors、dialogSelectors。
   - form: 必需，对象，包含 openButtonText、dialogTitle、submitButtonText、closeButtonText、successText、notes、fields。
   - search: 可选，对象，包含 inputLabel、extraInputLabels、keywordFromField、triggerButtonText、resetButtonText、resultTableTitle、notes、expectedColumns、rowActionButtons、pagination。
-  - assertions: 可选数组，元素为断言对象，支持 toast、table-row-exists、table-cell-equals、table-cell-contains 等类型。
-  - cleanup: 可选，对象，包含 enabled、strategy、notes。
+  - assertions: 可选数组，元素为断言对象，支持 toast、table-row-exists、table-cell-equals、table-cell-contains、custom 等类型。
+  - cleanup: 可选，对象，包含 enabled、strategy、matchField、action、searchBeforeCleanup、rowMatchMode、verifyAfterCleanup、failOnError、notes。
   - approval: 可选，对象，包含 approved、approvedBy、approvedAt。
   - runtime: 可选，对象，包含 stepTimeoutMs、pageTimeoutMs、screenshotOnStep、trace。
 
 - 字段值格式与约束
   - 字符串字段：建议使用明确、稳定的文案；支持环境变量占位符与动态占位符（如 NOW_YYYYMMDDHHMMSS）。
-  - 数组字段：如 loginHints、menuPath、fields、expectedColumns、rowActionButtons 等，需保证非空且元素为字符串。
-  - 布尔字段：如 headless、screenshotOnStep、trace、required、unique、enabled 等，仅接受布尔值。
-  - 数字字段：如 stepTimeoutMs、pageTimeoutMs，需为正整数毫秒值。
+  - 数组字段：如 loginHints、menuPath、fields、expectedColumns、rowActionButtons、tableRowSelectors、toastSelectors、dialogSelectors 等，需保证非空且元素为字符串。
+  - 布尔字段：如 headless、screenshotOnStep、trace、required、unique、enabled、searchBeforeCleanup、verifyAfterCleanup、failOnError 等，仅接受布尔值。
+  - 数字字段：如 stepTimeoutMs、pageTimeoutMs、timeoutMs，需为正整数毫秒值。
   - 时间字段：如 approvedAt，建议使用 ISO-8601 格式字符串。
 
 - 字段间逻辑关系与依赖
@@ -133,11 +142,12 @@ Runner-->>CLI : 输出执行结果
   - search 与 assertions 存在时，需确保 matchField、expectedFromField 等引用的字段存在于 form.fields 中。
   - navigation.menuPath 与 menuHints 协作，用于菜单点击与容错提示。
   - approval.approved=true 时才允许执行（受环境变量控制）。
+  - cleanup.enabled=true 且 cleanup.strategy 不为 'none' 时才执行清理操作。
 
-章节来源
-- [types.ts](file://src/stage2/types.ts#L86-L98)
+**章节来源**
+- [types.ts](file://src/stage2/types.ts#L141-L154)
 - [task-loader.ts](file://src/stage2/task-loader.ts#L50-L69)
-- [task-runner.ts](file://src/stage2/task-runner.ts#L1062-L1073)
+- [task-runner.ts](file://src/stage2/task-runner.ts#L1877-L1899)
 
 ### target（目标站点）
 - 字段
@@ -149,7 +159,7 @@ Runner-->>CLI : 输出执行结果
 - 最佳实践
   - 在 CI 环境通过环境变量注入 URL，避免硬编码。
 
-章节来源
+**章节来源**
 - [types.ts](file://src/stage2/types.ts#L5-L9)
 - [acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L4-L8)
 - [acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L4-L8)
@@ -164,7 +174,7 @@ Runner-->>CLI : 输出执行结果
 - 最佳实践
   - 生产环境建议通过环境变量注入；loginHints 描述页面元素特征，提升定位稳定性。
 
-章节来源
+**章节来源**
 - [types.ts](file://src/stage2/types.ts#L11-L15)
 - [task-loader.ts](file://src/stage2/task-loader.ts#L50-L62)
 - [acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L9-L17)
@@ -181,10 +191,25 @@ Runner-->>CLI : 输出执行结果
 - 最佳实践
   - menuPath 顺序与页面实际菜单一致；menuHints 提供页面结构提示，便于 AI 定位。
 
-章节来源
+**章节来源**
 - [types.ts](file://src/stage2/types.ts#L17-L21)
 - [acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L18-L28)
 - [acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L17-L28)
+
+### uiProfile（UI 配置文件）
+- 字段
+  - tableRowSelectors: 可选，表格行选择器数组，用于跨平台 UI 兼容。
+  - toastSelectors: 可选，Toast/消息选择器数组，用于跨平台 UI 兼容。
+  - dialogSelectors: 可选，弹窗容器选择器数组，用于跨平台 UI 兼容。
+- 约束
+  - 三个字段均为字符串数组，按优先级排列。
+- 最佳实践
+  - 为不同 UI 框架提供多个选择器，提高断言的稳定性。
+
+**章节来源**
+- [types.ts](file://src/stage2/types.ts#L58-L65)
+- [acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L29-L45)
+- [acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L29-L45)
 
 ### form（表单）
 - 字段
@@ -202,10 +227,10 @@ Runner-->>CLI : 输出执行结果
 - 最佳实践
   - 为每个字段提供清晰的 label 与 hints；对必填字段标记 required=true；对唯一字段标记 unique=true。
 
-章节来源
+**章节来源**
 - [types.ts](file://src/stage2/types.ts#L32-L40)
-- [acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L29-L47)
-- [acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L29-L103)
+- [acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L46-L64)
+- [acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L46-L120)
 
 ### search（搜索）
 - 字段
@@ -225,10 +250,10 @@ Runner-->>CLI : 输出执行结果
 - 最佳实践
   - 明确 keywordFromField 与 inputLabel 的对应关系；提供 expectedColumns 以增强断言准确性。
 
-章节来源
+**章节来源**
 - [types.ts](file://src/stage2/types.ts#L42-L56)
-- [acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L48-L57)
-- [acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L104-L139)
+- [acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L65-L74)
+- [acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L121-L156)
 
 ### assertions（断言）
 - 断言类型与字段
@@ -236,32 +261,68 @@ Runner-->>CLI : 输出执行结果
   - table-row-exists：断言列表中存在某行，需提供 matchField。
   - table-cell-equals：断言某行的若干列值等于期望值，需提供 matchField 与 expectedColumns。
   - table-cell-contains：断言某行某列包含期望值，需提供 matchField、column、expectedFromField。
+  - custom：自定义断言，需提供 description。
+
+- 新增配置选项
+  - timeoutMs: 可选，断言超时时间（毫秒），默认 15000。
+  - retryCount: 可选，断言重试次数，默认 2。
+  - soft: 可选，是否为软断言（失败不中断流程），默认 false。
+  - matchMode: 可选，行匹配模式，'exact' 或 'contains'，默认 'exact'。
+  - expectedColumnFromFields: 可选，列名到字段名映射，用于将表格列与表单字段对齐。
+  - expectedColumnValues: 可选，列名到期望值映射，优先级高于 expectedColumnFromFields。
+
 - 约束
   - matchField、expectedFromField 引用的字段需存在于 form.fields。
   - expectedColumns 为字符串数组。
+  - timeoutMs、retryCount 为正整数。
 - 最佳实践
-  - 优先使用结构化断言类型；为每个断言提供清晰的预期值来源。
+  - 优先使用结构化断言类型；为每个断言提供清晰的预期值来源；合理设置超时时间和重试次数。
 
-章节来源
-- [types.ts](file://src/stage2/types.ts#L58-L65)
-- [task-runner.ts](file://src/stage2/task-runner.ts#L1020-L1060)
-- [acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L58-L67)
-- [acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L140-L166)
+**更新** 新增了断言配置的详细选项，包括超时控制、重试机制和软断言支持
+
+**章节来源**
+- [types.ts](file://src/stage2/types.ts#L67-L88)
+- [task-runner.ts](file://src/stage2/task-runner.ts#L1133-L1190)
+- [acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L75-L94)
+- [acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L157-L198)
 
 ### cleanup（清理）
 - 字段
-  - enabled: 可选，是否启用清理。
-  - strategy: 可选，清理策略字符串。
+  - enabled: 可选，是否启用清理，默认 true。
+  - strategy: 可选，清理策略字符串，支持 'delete-created'、'delete-all-matched'、'custom'、'none'。
+  - matchField: 可选，用于定位待删除数据的字段（通常与表单中的 unique 字段对应）。
+  - action: 可选，清理操作配置对象。
+  - searchBeforeCleanup: 可选，清理前是否需要先搜索定位数据，默认 true。
+  - rowMatchMode: 可选，行匹配模式，默认 'exact'，'contains' 仅在业务明确允许时使用。
+  - verifyAfterCleanup: 可选，删除后是否校验目标行已消失，默认 true。
+  - failOnError: 可选，清理失败是否中断任务，默认 false。
   - notes: 可选，清理说明。
-- 约束
-  - enabled 为布尔值；strategy 为字符串；notes 为字符串。
-- 最佳实践
-  - 在测试数据回滚场景启用清理；strategy 与 notes 保持简洁明确。
 
-章节来源
-- [types.ts](file://src/stage2/types.ts#L67-L71)
-- [acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L68-L72)
-- [acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L167-L171)
+- action 对象字段
+  - actionType: 必需，操作类型：'delete' 或 'custom'。
+  - rowButtonText: 可选，行操作按钮文案，如"删除"。
+  - confirmDialogTitle: 可选，确认弹窗标题。
+  - confirmButtonText: 可选，确认按钮文案。
+  - cancelButtonText: 可选，取消按钮文案。
+  - successText: 可选，成功提示文案。
+  - customInstruction: 可选，自定义 AI 指令（actionType=custom 时使用）。
+  - hints: 可选，操作提示/辅助信息。
+
+- 约束
+  - enabled 为布尔值；strategy 为指定枚举值；notes 为字符串。
+  - 当 actionType='delete' 时，需要提供 rowButtonText 和 confirmButtonText。
+  - 当 actionType='custom' 时，需要提供 customInstruction。
+- 最佳实践
+  - 在测试数据回滚场景启用清理；strategy 与 notes 保持简洁明确；合理设置匹配模式和验证策略。
+
+- **更新** 新增了完整的清理配置选项，包括策略选择、操作类型、验证机制等
+
+**章节来源**
+- [types.ts](file://src/stage2/types.ts#L109-L126)
+- [types.ts](file://src/stage2/types.ts#L90-L107)
+- [task-runner.ts](file://src/stage2/task-runner.ts#L1877-L1899)
+- [acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L95-L116)
+- [acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L199-L220)
 
 ### approval（审批）
 - 字段
@@ -273,11 +334,11 @@ Runner-->>CLI : 输出执行结果
 - 最佳实践
   - 在 CI 中开启审批强制校验（STAGE2_REQUIRE_APPROVAL=true）时，务必设置 approved=true。
 
-章节来源
-- [types.ts](file://src/stage2/types.ts#L80-L84)
+**章节来源**
+- [types.ts](file://src/stage2/types.ts#L135-L139)
 - [task-runner.ts](file://src/stage2/task-runner.ts#L1068-L1073)
-- [acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L73-L77)
-- [acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L172-L176)
+- [acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L117-L121)
+- [acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L221-L225)
 
 ### runtime（运行时）
 - 字段
@@ -290,10 +351,10 @@ Runner-->>CLI : 输出执行结果
 - 最佳实践
   - 在不稳定页面或长流程中适当增大超时；截图与跟踪会增加磁盘占用，按需开启。
 
-章节来源
-- [types.ts](file://src/stage2/types.ts#L73-L78)
-- [acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L78-L83)
-- [acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L177-L182)
+**章节来源**
+- [types.ts](file://src/stage2/types.ts#L128-L133)
+- [acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L122-L127)
+- [acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L226-L231)
 
 ## 依赖关系分析
 - 任务加载器依赖于任务 JSON 的形状校验与模板解析（环境变量与动态值注入）。
@@ -310,22 +371,24 @@ Runner --> Output["执行结果"]
 Scripts["package.json 脚本"] --> Runner
 ```
 
-图表来源
+**图表来源**
 - [task-loader.ts](file://src/stage2/task-loader.ts#L79-L89)
-- [task-runner.ts](file://src/stage2/task-runner.ts#L1062-L1344)
-- [types.ts](file://src/stage2/types.ts#L86-L98)
+- [task-runner.ts](file://src/stage2/task-runner.ts#L1877-L1899)
+- [types.ts](file://src/stage2/types.ts#L141-L154)
 - [package.json](file://package.json#L6-L9)
 
-章节来源
+**章节来源**
 - [task-loader.ts](file://src/stage2/task-loader.ts#L79-L89)
-- [task-runner.ts](file://src/stage2/task-runner.ts#L1062-L1344)
-- [types.ts](file://src/stage2/types.ts#L86-L98)
+- [task-runner.ts](file://src/stage2/task-runner.ts#L1877-L1899)
+- [types.ts](file://src/stage2/types.ts#L141-L154)
 - [package.json](file://package.json#L6-L9)
 
 ## 性能考量
 - 合理设置 stepTimeoutMs 与 pageTimeoutMs，避免过短导致误判，过长影响整体效率。
 - 控制截图与 trace 的使用范围，仅在问题定位阶段开启，减少磁盘与 IO 压力。
 - 在搜索与断言环节，尽量使用精确的列名与匹配字段，减少回退与重试次数。
+- 合理配置断言的 timeoutMs 和 retryCount，平衡稳定性和执行效率。
+- 清理操作应避免不必要的搜索和验证，提高执行速度。
 
 ## 故障排查指南
 - 任务加载失败
@@ -344,20 +407,23 @@ Scripts["package.json 脚本"] --> Runner
   - 校验提示未消除或弹窗未关闭。
   - 解决方法：查看收集到的校验提示；确认提交按钮文案；必要时增加重试与自动修复逻辑。
 - 断言失败
-  - 断言类型与字段引用不匹配。
-  - 解决方法：核对 matchField、expectedFromField 引用的字段；确保 expectedColumns 正确。
+  - 断言类型与字段引用不匹配；超时时间过短；重试次数不足。
+  - 解决方法：核对 matchField、expectedFromField 引用的字段；调整 timeoutMs 和 retryCount；确保 expectedColumns 正确。
+- 清理失败
+  - 清理策略配置错误；匹配字段不正确；确认弹窗处理失败。
+  - 解决方法：检查 cleanup.enabled 和 strategy；确认 matchField 与表单字段对应；验证 action 配置。
 - 审批未通过
   - STAGE2_REQUIRE_APPROVAL=true 时 approval.approved=false。
   - 解决方法：设置 approved=true 并提供审批人与时间。
 
-章节来源
+**章节来源**
 - [task-loader.ts](file://src/stage2/task-loader.ts#L50-L69)
 - [task-runner.ts](file://src/stage2/task-runner.ts#L1068-L1073)
-- [task-runner.ts](file://src/stage2/task-runner.ts#L973-L1018)
-- [task-runner.ts](file://src/stage2/task-runner.ts#L1020-L1060)
+- [task-runner.ts](file://src/stage2/task-runner.ts#L1133-L1190)
+- [task-runner.ts](file://src/stage2/task-runner.ts#L1877-L1899)
 
 ## 结论
-本规范系统梳理了 HI-TEST 任务 JSON 的结构与语法规则，明确了各字段的必需性、可选性、值格式与约束、字段间依赖关系，并结合执行器实现展示了断言类型与运行时配置的最佳实践。遵循本规范可显著提升任务可维护性与执行稳定性。
+本规范系统梳理了 HI-TEST 任务 JSON 的结构与语法规则，明确了各字段的必需性、可选性、值格式与约束、字段间依赖关系，并结合执行器实现展示了断言类型与运行时配置的最佳实践。新增的断言配置（timeoutMs、retryCount、soft）和清理配置（enabled、strategy、matchField、action）进一步增强了任务的可控性和稳定性。遵循本规范可显著提升任务可维护性与执行稳定性。
 
 ## 附录
 
@@ -365,7 +431,7 @@ Scripts["package.json 脚本"] --> Runner
 以下为基于仓库现有实现与示例的 Schema 建议定义（以伪 JSON Schema 形式呈现，便于理解与扩展）：
 - 顶层对象 AcceptanceTask
   - 必需字段：taskId、taskName、target、account、form
-  - 可选字段：navigation、search、assertions、cleanup、approval、runtime
+  - 可选字段：navigation、uiProfile、search、assertions、cleanup、approval、runtime
   - target.url 必填且为 URL 字符串
   - account.username、password 必填
   - form.openButtonText、form.submitButtonText 必填
@@ -374,17 +440,20 @@ Scripts["package.json 脚本"] --> Runner
   - cascader 的 value 为字符串数组
   - search.keywordFromField 引用 form.fields 中存在的字段
   - assertions 中的 matchField、expectedFromField、column、expectedColumns 引用 form.fields 中存在的字段
+  - assertions 新增 timeoutMs、retryCount、soft、matchMode、expectedColumnFromFields、expectedColumnValues 等字段
+  - cleanup.enabled 默认 true；strategy 支持 'delete-created'、'delete-all-matched'、'custom'、'none'
+  - cleanup.actionType 支持 'delete'、'custom'
   - approval.approved=true 时才允许执行（受环境变量控制）
 
-章节来源
-- [types.ts](file://src/stage2/types.ts#L86-L98)
+**章节来源**
+- [types.ts](file://src/stage2/types.ts#L141-L154)
 - [task-loader.ts](file://src/stage2/task-loader.ts#L50-L69)
-- [task-runner.ts](file://src/stage2/task-runner.ts#L1020-L1060)
+- [task-runner.ts](file://src/stage2/task-runner.ts#L1133-L1190)
 
 ### 字段值示例与最佳实践
 - 示例参考
-  - 通用模板：[acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L1-L85)
-  - 业务场景示例：[acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L1-L184)
+  - 通用模板：[acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L1-L129)
+  - 业务场景示例：[acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L1-L233)
 - 最佳实践
   - 使用环境变量占位符（如 TEST_USERNAME、TEST_PASSWORD）注入敏感信息。
   - 使用动态占位符 NOW_YYYYMMDDHHMMSS 生成唯一值，避免重复数据。
@@ -392,8 +461,10 @@ Scripts["package.json 脚本"] --> Runner
   - 对必填与唯一字段明确标注 required、unique。
   - 在 search 中明确 keywordFromField 与 expectedColumns，提升断言准确性。
   - 在 approval 中提供审批人与时间，满足 CI 审批要求。
+  - 合理配置断言的 timeoutMs、retryCount、soft 参数，平衡稳定性和性能。
+  - 清理配置中明确 strategy 和 matchField，确保数据清理的准确性。
 
-章节来源
+**章节来源**
 - [task-loader.ts](file://src/stage2/task-loader.ts#L19-L48)
-- [acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L1-L85)
-- [acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L1-L184)
+- [acceptance-task.template.json](file://specs/tasks/acceptance-task.template.json#L1-L129)
+- [acceptance-task.community-create.example.json](file://specs/tasks/acceptance-task.community-create.example.json#L1-L233)
