@@ -26,6 +26,23 @@
       "当前页面左侧已显示小区信息管理为选中状态"
     ]
   },
+  "uiProfile": {
+    "tableRowSelectors": [
+      "table tbody tr",
+      ".el-table__body tr",
+      ".ant-table-tbody tr"
+    ],
+    "toastSelectors": [
+      ".el-message",
+      ".ant-message",
+      "[role=\"alert\"]"
+    ],
+    "dialogSelectors": [
+      "div[role=\"dialog\"]",
+      ".el-dialog__wrapper",
+      ".ant-modal-wrap"
+    ]
+  },
   "form": {
     "openButtonText": "新增小区",
     "dialogTitle": "新增小区",
@@ -148,6 +165,7 @@
     {
       "type": "table-row-exists",
       "matchField": "小区名称",
+      "matchMode": "exact",
       "timeoutMs": 10000,
       "retryCount": 2
     },
@@ -161,6 +179,13 @@
         "负责人",
         "联系电话"
       ],
+      "expectedColumnFromFields": {
+        "小区名称": "小区名称",
+        "所在地区": "省市区",
+        "详细地址": "小区地址",
+        "负责人": "负责人",
+        "联系电话": "联系电话"
+      },
       "retryCount": 2
     },
     {
@@ -176,6 +201,8 @@
     "strategy": "delete-created",
     "matchField": "小区名称",
     "searchBeforeCleanup": true,
+    "rowMatchMode": "exact",
+    "verifyAfterCleanup": true,
     "failOnError": false,
     "action": {
       "actionType": "delete",

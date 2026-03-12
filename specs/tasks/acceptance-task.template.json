@@ -26,6 +26,23 @@
       "如果一级菜单已展开，不需要重复点击"
     ]
   },
+  "uiProfile": {
+    "tableRowSelectors": [
+      "table tbody tr",
+      ".el-table__body tr",
+      ".ant-table-tbody tr"
+    ],
+    "toastSelectors": [
+      ".el-message",
+      ".ant-message",
+      "[role=\"alert\"]"
+    ],
+    "dialogSelectors": [
+      "div[role=\"dialog\"]",
+      ".el-dialog__wrapper",
+      ".ant-modal-wrap"
+    ]
+  },
   "form": {
     "openButtonText": "新增",
     "dialogTitle": "新增弹窗标题",
@@ -66,6 +83,7 @@
     {
       "type": "table-row-exists",
       "matchField": "字段标签",
+      "matchMode": "exact",
       "timeoutMs": 10000
     },
     {
@@ -79,6 +97,8 @@
     "strategy": "delete-created",
     "matchField": "字段标签",
     "searchBeforeCleanup": true,
+    "rowMatchMode": "exact",
+    "verifyAfterCleanup": true,
     "failOnError": false,
     "action": {
       "actionType": "delete",

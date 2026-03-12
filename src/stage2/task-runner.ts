@@ -1026,6 +1026,168 @@ async function submitFormWithAutoFix(
 const DEFAULT_ASSERTION_TIMEOUT_MS = 15000;
 const DEFAULT_ASSERTION_RETRY_COUNT = 2;
 const ASSERTION_POLL_INTERVAL_MS = 500;
+const DEFAULT_TABLE_ROW_SELECTORS = [
+  'table tbody tr',
+  '.el-table__body tr',
+  '.ant-table-tbody tr',
+  '.ivu-table-tbody tr',
+  '[role="row"]',
+];
+const DEFAULT_TOAST_SELECTORS = [
+  '.el-message',
+  '.el-notification',
+  '.ant-message',
+  '.ant-notification',
+  '.ivu-message',
+  '.ivu-notice',
+  '[role="alert"]',
+  '[class*="toast"]',
+  '[class*="message"]',
+  '[class*="notification"]',
+];
+const DEFAULT_DIALOG_SELECTORS = [
+  'div[role="dialog"]',
+  '.el-dialog__wrapper',
+  '.el-message-box__wrapper',
+  '.ant-modal-wrap',
+  '.ant-modal-confirm',
+  '.ivu-modal-wrap',
+  '[class*="confirm"]',
+  '[class*="modal"]',
+];
+
+type RowMatchMode = 'exact' | 'contains';
+
+function resolveRowMatchMode(
+  mode: TaskAssertion['matchMode'] | TaskCleanup['rowMatchMode'] | undefined,
+): RowMatchMode {
+  if (mode === 'contains') {
+    return 'contains';
+  }
+  return 'exact';
+}
+
+function resolveTableRowSelectors(task: AcceptanceTask): string[] {
+  return uniqueNonEmpty([
+    ...(task.uiProfile?.tableRowSelectors || []),
+    ...DEFAULT_TABLE_ROW_SELECTORS,
+  ]);
+}
+
+function resolveToastSelectors(task: AcceptanceTask): string[] {
+  return uniqueNonEmpty([
+    ...(task.uiProfile?.toastSelectors || []),
+    ...DEFAULT_TOAST_SELECTORS,
+  ]);
+}
+
+function resolveDialogSelectors(task: AcceptanceTask): string[] {
+  return uniqueNonEmpty([
+    ...(task.uiProfile?.dialogSelectors || []),
+    ...DEFAULT_DIALOG_SELECTORS,
+  ]);
+}
+
+function normalizeLookupKey(value: string): string {
+  return normalizeText(value).toLowerCase();
+}
+
+function resolveExpectedValueForColumn(
+  column: string,
+  resolvedValues: Record<string, string>,
+): string | undefined {
+  if (resolvedValues[column]) {
+    return resolvedValues[column];
+  }
+  const targetKey = normalizeLookupKey(column);
+  const entries = Object.entries(resolvedValues);
+  for (let i = 0; i < entries.length; i += 1) {
+    const [key, value] = entries[i];
+    if (normalizeLookupKey(key) === targetKey && value) {
+      return value;
+    }
+  }
+  const fuzzyCandidates: string[] = [];
+  for (let i = 0; i < entries.length; i += 1) {
+    const [key, value] = entries[i];
+    const normalizedKey = normalizeLookupKey(key);
+    if (
+      value &&
+      (normalizedKey.includes(targetKey) || targetKey.includes(normalizedKey))
+    ) {
+      fuzzyCandidates.push(value);
+    }
+  }
+  if (fuzzyCandidates.length === 1) {
+    return fuzzyCandidates[0];
+  }
+  return undefined;
+}
+
+function buildExpectedColumnMap(
+  assertion: TaskAssertion,
+  resolvedValues: Record<string, string>,
+): Record<string, string> {
+  const expectedMap: Record<string, string> = {};
+  const columns = assertion.expectedColumns || [];
+  for (let i = 0; i < columns.length; i += 1) {
+    const column = columns[i];
+    const literal = assertion.expectedColumnValues?.[column];
+    if (literal && literal.trim()) {
+      expectedMap[column] = literal.trim();
+      continue;
+    }
+    const fromField = assertion.expectedColumnFromFields?.[column];
+    if (fromField && resolvedValues[fromField]) {
+      expectedMap[column] = resolvedValues[fromField];
+      continue;
+    }
+    const inferred = resolveExpectedValueForColumn(column, resolvedValues);
+    if (inferred && inferred.trim()) {
+      expectedMap[column] = inferred.trim();
+    }
+  }
+  return expectedMap;
+}
+
+async function matchRowByCellValue(
+  row: Locator,
+  cellValue: string,
+  matchMode: RowMatchMode,
+): Promise<boolean> {
+  const normalizedValue = normalizeText(cellValue);
+  if (!normalizedValue) {
+    return false;
+  }
+  const cellLocator = row.locator(
+    'td, th, [role="cell"], .cell, .ant-table-cell, .ivu-table-cell',
+  );
+  const cellCount = await cellLocator.count().catch(() => 0);
+  if (cellCount > 0) {
+    for (let i = 0; i < cellCount; i += 1) {
+      const cell = cellLocator.nth(i);
+      const cellText = normalizeText(await cell.innerText().catch(() => ''));
+      if (!cellText) {
+        continue;
+      }
+      if (matchMode === 'exact' && cellText === normalizedValue) {
+        return true;
+      }
+      if (matchMode === 'contains' && cellText.includes(normalizedValue)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  const rowText = normalizeText(await row.innerText().catch(() => ''));
+  if (!rowText) {
+    return false;
+  }
+  if (matchMode === 'exact') {
+    return rowText === normalizedValue;
+  }
+  return rowText.includes(normalizedValue);
+}
 
 /**
  * 通用文本可见性检测（Playwright 硬检测）
@@ -1035,6 +1197,7 @@ async function detectTextVisible(
   page: Page,
   text: string,
   timeoutMs: number,
+  toastSelectors: string[] = DEFAULT_TOAST_SELECTORS,
 ): Promise<{ found: boolean; matchedText?: string }> {
   const deadline = Date.now() + timeoutMs;
   const normalizedTarget = normalizeText(text);
@@ -1054,18 +1217,6 @@ async function detectTextVisible(
       }
 
       // 策略3：Toast/Message 组件检测
-      const toastSelectors = [
-        '.el-message',
-        '.el-notification',
-        '.ant-message',
-        '.ant-notification',
-        '.ivu-message',
-        '.ivu-notice',
-        '[role="alert"]',
-        '[class*="toast"]',
-        '[class*="message"]',
-        '[class*="notification"]',
-      ];
       for (let i = 0; i < toastSelectors.length; i += 1) {
         const toastLocator = page.locator(toastSelectors[i]);
         const count = await toastLocator.count();
@@ -1095,19 +1246,23 @@ async function detectTableRowExists(
   page: Page,
   cellValue: string,
   timeoutMs: number,
+  opts?: {
+    tableSelectors?: string[];
+    matchMode?: RowMatchMode;
+  },
 ): Promise<{ found: boolean; rowIndex?: number }> {
-  const deadline = Date.now() + timeoutMs;
   const normalizedValue = normalizeText(cellValue);
+  if (!normalizedValue) {
+    return { found: false };
+  }
+  const deadline = Date.now() + timeoutMs;
+  const tableSelectors = opts?.tableSelectors?.length
+    ? opts.tableSelectors
+    : DEFAULT_TABLE_ROW_SELECTORS;
+  const matchMode = resolveRowMatchMode(opts?.matchMode);
 
   while (Date.now() < deadline) {
     try {
-      const tableSelectors = [
-        'table tbody tr',
-        '.el-table__body tr',
-        '.ant-table-tbody tr',
-        '.ivu-table-tbody tr',
-        '[role="row"]',
-      ];
       for (let i = 0; i < tableSelectors.length; i += 1) {
         const rows = page.locator(tableSelectors[i]);
         const count = await rows.count();
@@ -1116,8 +1271,7 @@ async function detectTableRowExists(
           if (!(await row.isVisible())) {
             continue;
           }
-          const rowText = await row.innerText().catch(() => '');
-          if (normalizeText(rowText).includes(normalizedValue)) {
+          if (await matchRowByCellValue(row, normalizedValue, matchMode)) {
             return { found: true, rowIndex: j };
           }
         }
@@ -1169,6 +1323,8 @@ async function runAssertion(
 ): Promise<void> {
   const timeoutMs = assertion.timeoutMs || DEFAULT_ASSERTION_TIMEOUT_MS;
   const retryCount = assertion.retryCount ?? DEFAULT_ASSERTION_RETRY_COUNT;
+  const toastSelectors = resolveToastSelectors(task);
+  const tableSelectors = resolveTableRowSelectors(task);
 
   // Toast 断言：Playwright 检测优先，AI 兜底
   if (assertion.type === 'toast' && assertion.expectedText) {
@@ -1176,7 +1332,12 @@ async function runAssertion(
 
     // 先用 Playwright 硬检测
     const pwResult = await executeAssertionWithRetry(
-      async () => detectTextVisible(runner.page, expectedText, timeoutMs / 2),
+      async () => detectTextVisible(
+        runner.page,
+        expectedText,
+        timeoutMs / 2,
+        toastSelectors,
+      ),
       (r) => r.found,
       1,
       500,
@@ -1212,10 +1373,20 @@ async function runAssertion(
   // 表格行存在断言
   if (assertion.type === 'table-row-exists' && assertion.matchField) {
     const expectedValue = resolvedValues[assertion.matchField] || '';
+    if (!normalizeText(expectedValue)) {
+      throw new Error(
+        `表格行断言配置无效：matchField="${assertion.matchField}" 未解析到有效值`,
+      );
+    }
+    const rowMatchMode = resolveRowMatchMode(assertion.matchMode);
 
     // 先用 Playwright 硬检测
     const pwResult = await executeAssertionWithRetry(
-      async () => detectTableRowExists(runner.page, expectedValue, timeoutMs / 2),
+      async () =>
+        detectTableRowExists(runner.page, expectedValue, timeoutMs / 2, {
+          tableSelectors,
+          matchMode: rowMatchMode,
+        }),
       (r) => r.found,
       1,
       500,
@@ -1230,7 +1401,9 @@ async function runAssertion(
     const aiResult = await executeAssertionWithRetry(
       async () => {
         const queryResult = await runner.aiQuery<{ found: boolean; rowInfo?: string }>(
-          `检查当前页面列表/表格中是否存在包含"${expectedValue}"的数据行。返回格式：{ found: boolean, rowInfo: string }`,
+          `检查当前页面列表/表格中是否存在${
+            rowMatchMode === 'exact' ? '精确匹配' : '包含匹配'
+          }"${expectedValue}"的数据行。返回格式：{ found: boolean, rowInfo: string }`,
         );
         return queryResult;
       },
@@ -1244,27 +1417,58 @@ async function runAssertion(
     }
 
     throw new Error(
-      `表格行断言失败：未找到包含"${expectedValue}"的数据行。`,
+      `表格行断言失败：未找到${
+        rowMatchMode === 'exact' ? '精确匹配' : '包含匹配'
+      }"${expectedValue}"的数据行。`,
     );
   }
 
   // 表格单元格值断言
   if (assertion.type === 'table-cell-equals' && assertion.matchField) {
     const expectedValue = resolvedValues[assertion.matchField] || '';
-    const columns = (assertion.expectedColumns || []).join('、');
+    if (!normalizeText(expectedValue)) {
+      throw new Error(
+        `表格单元格断言配置无效：matchField="${assertion.matchField}" 未解析到有效值`,
+      );
+    }
+    const expectedColumns = uniqueNonEmpty(assertion.expectedColumns || []);
+    if (expectedColumns.length === 0) {
+      throw new Error('表格单元格断言配置无效：expectedColumns 不能为空');
+    }
+    const expectedColumnMap = buildExpectedColumnMap(assertion, resolvedValues);
+    if (Object.keys(expectedColumnMap).length === 0) {
+      throw new Error(
+        '表格单元格断言配置无效：未解析到任何期望列值，请补充 expectedColumnValues 或 expectedColumnFromFields',
+      );
+    }
+    const missingExpectedColumns = expectedColumns.filter(
+      (column) => !expectedColumnMap[column],
+    );
+    if (missingExpectedColumns.length > 0) {
+      throw new Error(
+        `表格单元格断言配置无效：以下列缺少期望值映射 ${missingExpectedColumns.join('、')}`,
+      );
+    }
 
     const aiResult = await executeAssertionWithRetry(
       async () => {
         const queryResult = await runner.aiQuery<{
           found: boolean;
           matchedRow?: boolean;
+          allMatched?: boolean;
+          mismatchedColumns?: string[];
           columnValues?: Record<string, string>;
         }>(
-          `在当前列表中找到"${assertion.matchField}"为"${expectedValue}"的行，提取列"${columns}"的值。返回格式：{ found: boolean, matchedRow: boolean, columnValues: { 列名: 值 } }`,
+          `在当前列表中找到"${assertion.matchField}"为"${expectedValue}"的行，提取列${JSON.stringify(
+            expectedColumns,
+          )}的值，并与期望值${JSON.stringify(
+            expectedColumnMap,
+          )}做严格比对。返回格式：{ found: boolean, matchedRow: boolean, allMatched: boolean, mismatchedColumns: string[], columnValues: { 列名: 值 } }`,
         );
         return queryResult;
       },
-      (r) => r?.found === true && r?.matchedRow === true,
+      (r) =>
+        r?.found === true && r?.matchedRow === true && r?.allMatched === true,
       retryCount,
       1000,
     );
@@ -1287,6 +1491,16 @@ async function runAssertion(
   ) {
     const matchValue = resolvedValues[assertion.matchField] || '';
     const expectedValue = resolvedValues[assertion.expectedFromField] || '';
+    if (!normalizeText(matchValue)) {
+      throw new Error(
+        `表格单元格包含断言配置无效：matchField="${assertion.matchField}" 未解析到有效值`,
+      );
+    }
+    if (!normalizeText(expectedValue)) {
+      throw new Error(
+        `表格单元格包含断言配置无效：expectedFromField="${assertion.expectedFromField}" 未解析到有效值`,
+      );
+    }
 
     const aiResult = await executeAssertionWithRetry(
       async () => {
@@ -1299,7 +1513,9 @@ async function runAssertion(
         );
         return queryResult;
       },
-      (r) => r?.found === true && r?.contains === true,
+      (r) =>
+        r?.found === true &&
+        normalizeText(r?.cellValue || '').includes(normalizeText(expectedValue)),
       retryCount,
       1000,
     );
@@ -1372,19 +1588,17 @@ async function clickRowActionButton(
   rowValue: string,
   buttonText: string,
   runner: RunnerContext,
+  opts?: {
+    tableSelectors?: string[];
+    matchMode?: RowMatchMode;
+  },
 ): Promise<boolean> {
-  const normalizedValue = normalizeText(rowValue);
-  const normalizedButton = normalizeText(buttonText);
+  const matchMode = resolveRowMatchMode(opts?.matchMode);
+  const tableSelectors = opts?.tableSelectors?.length
+    ? opts.tableSelectors
+    : DEFAULT_TABLE_ROW_SELECTORS;
 
   // 策略1：通过表格行定位操作按钮
-  const tableSelectors = [
-    'table tbody tr',
-    '.el-table__body tr',
-    '.ant-table-tbody tr',
-    '.ivu-table-tbody tr',
-    '[role="row"]',
-  ];
-
   for (let i = 0; i < tableSelectors.length; i += 1) {
     const rows = page.locator(tableSelectors[i]);
     const count = await rows.count();
@@ -1393,8 +1607,7 @@ async function clickRowActionButton(
       if (!(await row.isVisible())) {
         continue;
       }
-      const rowText = await row.innerText().catch(() => '');
-      if (!normalizeText(rowText).includes(normalizedValue)) {
+      if (!(await matchRowByCellValue(row, rowValue, matchMode))) {
         continue;
       }
 
@@ -1428,7 +1641,9 @@ async function clickRowActionButton(
   // Playwright 定位失败，使用 AI
   console.log(`[数据清理] Playwright定位失败，使用AI点击行操作按钮"${buttonText}"`);
   await runner.ai(
-    `在列表中找到包含"${rowValue}"的数据行，点击该行的"${buttonText}"按钮`,
+    `在列表中找到${
+      matchMode === 'exact' ? '精确匹配' : '包含匹配'
+    }"${rowValue}"的数据行，点击该行的"${buttonText}"按钮`,
   );
   return true;
 }
@@ -1437,6 +1652,7 @@ async function clickRowActionButton(
  * 处理确认弹窗
  */
 async function handleConfirmDialog(
+  task: AcceptanceTask,
   page: Page,
   action: TaskCleanupAction,
   runner: RunnerContext,
@@ -1448,16 +1664,7 @@ async function handleConfirmDialog(
   await page.waitForTimeout(500);
 
   // 策略1：通过弹窗容器定位确认按钮
-  const dialogSelectors = [
-    'div[role="dialog"]',
-    '.el-dialog__wrapper',
-    '.el-message-box__wrapper',
-    '.ant-modal-wrap',
-    '.ant-modal-confirm',
-    '.ivu-modal-wrap',
-    '[class*="confirm"]',
-    '[class*="modal"]',
-  ];
+  const dialogSelectors = resolveDialogSelectors(task);
 
   for (let i = 0; i < dialogSelectors.length; i += 1) {
     const dialogs = page.locator(dialogSelectors[i]);
@@ -1512,8 +1719,14 @@ async function waitForCleanupSuccess(
   page: Page,
   successText: string,
   timeoutMs: number,
+  toastSelectors: string[] = DEFAULT_TOAST_SELECTORS,
 ): Promise<boolean> {
-  const result = await detectTextVisible(page, successText, timeoutMs);
+  const result = await detectTextVisible(
+    page,
+    successText,
+    timeoutMs,
+    toastSelectors,
+  );
   return result.found;
 }
 
@@ -1522,31 +1735,63 @@ async function waitForCleanupSuccess(
  */
 async function executeDeleteAction(
   task: AcceptanceTask,
+  cleanup: TaskCleanup,
   targetValue: string,
   action: TaskCleanupAction,
   runner: RunnerContext,
 ): Promise<{ success: boolean; message: string }> {
   const page = runner.page;
   const buttonText = action.rowButtonText || '删除';
+  const rowMatchMode = resolveRowMatchMode(cleanup.rowMatchMode);
+  const tableSelectors = resolveTableRowSelectors(task);
+  const toastSelectors = resolveToastSelectors(task);
+  const verifyAfterCleanup = cleanup.verifyAfterCleanup !== false;
 
   try {
     // 1. 点击行操作按钮
     console.log(`[数据清理] 点击"${targetValue}"的"${buttonText}"按钮`);
-    await clickRowActionButton(page, targetValue, buttonText, runner);
+    await clickRowActionButton(page, targetValue, buttonText, runner, {
+      tableSelectors,
+      matchMode: rowMatchMode,
+    });
     await page.waitForTimeout(300);
 
     // 2. 处理确认弹窗
     if (action.confirmButtonText || action.confirmDialogTitle) {
       console.log(`[数据清理] 处理确认弹窗`);
-      await handleConfirmDialog(page, action, runner);
+      await handleConfirmDialog(task, page, action, runner);
     }
 
     // 3. 等待成功提示
+    let successTextDetected = true;
     if (action.successText) {
-      const success = await waitForCleanupSuccess(page, action.successText, 8000);
-      if (!success) {
+      successTextDetected = await waitForCleanupSuccess(
+        page,
+        action.successText,
+        8000,
+        toastSelectors,
+      );
+      if (!successTextDetected) {
         console.warn(`[数据清理] 未检测到成功提示"${action.successText}"，但继续执行`);
       }
+    }
+
+    if (verifyAfterCleanup) {
+      const stillExists = await detectTableRowExists(page, targetValue, 4000, {
+        tableSelectors,
+        matchMode: rowMatchMode,
+      });
+      if (stillExists.found) {
+        return {
+          success: false,
+          message: `删除"${targetValue}"后目标行仍存在，疑似未删除成功`,
+        };
+      }
+    } else if (action.successText && !successTextDetected) {
+      return {
+        success: false,
+        message: `删除"${targetValue}"后未检测到成功提示"${action.successText}"`,
+      };
     }
 
     await page.waitForTimeout(500);
@@ -1592,6 +1837,7 @@ async function executeCustomCleanupAction(
  */
 async function searchForCleanupTarget(
   task: AcceptanceTask,
+  cleanup: TaskCleanup,
   targetValue: string,
   runner: RunnerContext,
 ): Promise<boolean> {
@@ -1618,7 +1864,10 @@ async function searchForCleanupTarget(
   await page.waitForTimeout(800);
 
   // 检查是否找到目标数据
-  const result = await detectTableRowExists(page, targetValue, 5000);
+  const result = await detectTableRowExists(page, targetValue, 5000, {
+    tableSelectors: resolveTableRowSelectors(task),
+    matchMode: resolveRowMatchMode(cleanup.rowMatchMode),
+  });
   return result.found;
 }
 
@@ -1675,20 +1924,21 @@ async function runCleanup(
     }
   }
 
-  if (targetValues.length === 0) {
+  const normalizedTargetValues = uniqueNonEmpty(targetValues);
+  if (normalizedTargetValues.length === 0) {
     console.log(`[数据清理] 无待清理数据`);
     return { success: true, cleanedCount: 0, errors };
   }
 
-  console.log(`[数据清理] 待清理数据: ${targetValues.join(', ')}`);
+  console.log(`[数据清理] 待清理数据: ${normalizedTargetValues.join(', ')}`);
 
   // 逐条执行清理
-  for (let i = 0; i < targetValues.length; i += 1) {
-    const targetValue = targetValues[i];
+  for (let i = 0; i < normalizedTargetValues.length; i += 1) {
+    const targetValue = normalizedTargetValues[i];
 
     // 搜索定位（如果需要）
     if (cleanup.searchBeforeCleanup !== false && task.search) {
-      const found = await searchForCleanupTarget(task, targetValue, runner);
+      const found = await searchForCleanupTarget(task, cleanup, targetValue, runner);
       if (!found) {
         console.log(`[数据清理] 未找到"${targetValue}"，可能已被删除，跳过`);
         continue;
@@ -1698,7 +1948,13 @@ async function runCleanup(
     // 执行清理操作
     let result: { success: boolean; message: string };
     if (action.actionType === 'delete') {
-      result = await executeDeleteAction(task, targetValue, action, runner);
+      result = await executeDeleteAction(
+        task,
+        cleanup,
+        targetValue,
+        action,
+        runner,
+      );
     } else if (action.actionType === 'custom') {
       result = await executeCustomCleanupAction(task, targetValue, action, runner);
     } else {

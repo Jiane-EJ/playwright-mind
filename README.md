@@ -102,6 +102,13 @@ STAGE2_CAPTCHA_WAIT_TIMEOUT_MS=120000
 * `.ai`：描述步骤并执行交互
 * `.aiQuery`：从页面中提取结构化数据
 * `.aiAssert`：执行 AI 断言
+* `.aiWaitFor`：AI 等待条件满足（仅在 Playwright 常规等待不适用时使用）
+
+推荐实践：
+
+* 断言优先使用 **Playwright 硬检测**（`getByRole/getByLabel/getByTestId` + 自动重试断言）
+* 语义复杂场景优先使用 **`aiQuery + 代码断言`**，减少 `aiAssert` 幻觉风险
+* AI 操作作为兜底，不建议所有步骤都直接依赖自由文本 AI 操作
 
 ## 运行测试
 
@@ -129,6 +136,17 @@ npm run stage2:run:headed
 * 第二段结果：`t_runtime/acceptance-results/<taskId>/<timestamp>/result.json`
 * 第二段过程快照：`t_runtime/acceptance-results/<taskId>/<timestamp>/result.partial.json`
 * 第二段步骤截图：`t_runtime/acceptance-results/<taskId>/<timestamp>/screenshots/`
+
+## 跨平台通用配置（Stage2）
+
+为支持多个 Web 平台接入，任务 JSON 支持以下通用化字段：
+
+* `uiProfile.tableRowSelectors`：平台表格行选择器优先级列表
+* `uiProfile.toastSelectors`：平台消息提示选择器优先级列表
+* `uiProfile.dialogSelectors`：平台弹窗选择器优先级列表
+* `assertions[].matchMode`：行匹配模式（`exact` / `contains`）
+* `cleanup.rowMatchMode`：清理时行匹配模式（建议 `exact`）
+* `cleanup.verifyAfterCleanup`：删除后是否强制校验目标行消失（建议 `true`）
 
 ## 当前状态
 

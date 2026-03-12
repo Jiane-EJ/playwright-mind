@@ -55,13 +55,28 @@ export interface TaskSearch {
   };
 }
 
+export interface TaskUiProfile {
+  /** 表格行选择器，跨平台可按优先级补充 */
+  tableRowSelectors?: string[];
+  /** Toast/消息选择器，跨平台可按优先级补充 */
+  toastSelectors?: string[];
+  /** 弹窗容器选择器，跨平台可按优先级补充 */
+  dialogSelectors?: string[];
+}
+
 export interface TaskAssertion {
   type: string;
   expectedText?: string;
   matchField?: string;
   expectedColumns?: string[];
+  /** 列名 -> 字段名映射，用于将表格列与表单字段对齐 */
+  expectedColumnFromFields?: Record<string, string>;
+  /** 列名 -> 期望值映射，优先级高于 expectedColumnFromFields */
+  expectedColumnValues?: Record<string, string>;
   column?: string;
   expectedFromField?: string;
+  /** 行匹配模式，默认 exact */
+  matchMode?: 'exact' | 'contains';
   /** 断言超时时间（毫秒），默认 15000 */
   timeoutMs?: number;
   /** 断言重试次数，默认 2 */
@@ -101,6 +116,10 @@ export interface TaskCleanup {
   action?: TaskCleanupAction;
   /** 清理前是否需要先搜索定位数据 */
   searchBeforeCleanup?: boolean;
+  /** 行匹配模式，默认 exact，contains 仅在业务明确允许时使用 */
+  rowMatchMode?: 'exact' | 'contains';
+  /** 删除后是否校验目标行已消失，默认 true */
+  verifyAfterCleanup?: boolean;
   /** 清理失败是否中断任务 */
   failOnError?: boolean;
   notes?: string;
@@ -125,6 +144,7 @@ export interface AcceptanceTask {
   target: TaskTarget;
   account: TaskAccount;
   navigation?: TaskNavigation;
+  uiProfile?: TaskUiProfile;
   form: TaskForm;
   search?: TaskSearch;
   assertions?: TaskAssertion[];
@@ -157,4 +177,3 @@ export interface Stage2ExecutionResult {
   querySnapshots: Record<string, unknown>;
   steps: StepResult[];
 }
-
