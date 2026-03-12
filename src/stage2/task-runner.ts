@@ -35,7 +35,7 @@ const CAPTCHA_MODE_MANUAL = 'manual';
 const CAPTCHA_MODE_AUTO = 'auto';
 const CAPTCHA_MODE_FAIL = 'fail';
 const CAPTCHA_MODE_IGNORE = 'ignore';
-const DEFAULT_CAPTCHA_MODE = CAPTCHA_MODE_MANUAL;
+const DEFAULT_CAPTCHA_MODE = CAPTCHA_MODE_AUTO;
 const DEFAULT_CAPTCHA_WAIT_TIMEOUT_MS = 120000;
 const CAPTCHA_CHECK_INTERVAL_MS = 1000;
 const CAPTCHA_TEXT_PATTERNS = [
@@ -1150,6 +1150,87 @@ function buildExpectedColumnMap(
   return expectedMap;
 }
 
+function normalizeStructuredText(value: string): string {
+  return value.replace(/[\s/＞>→]+/g, '').trim();
+}
+
+function isExactComparableMatch(actualValue: string, expectedValue: string): boolean {
+  const normalizedActual = normalizeText(actualValue);
+  const normalizedExpected = normalizeText(expectedValue);
+  if (normalizedActual === normalizedExpected) {
+    return true;
+  }
+  const hasStructuredSeparator = /[/＞>→]/.test(actualValue) || /[/＞>→]/.test(expectedValue);
+  if (!hasStructuredSeparator) {
+    return false;
+  }
+  return normalizeStructuredText(actualValue) === normalizeStructuredText(expectedValue);
+}
+
+function isContainsComparableMatch(actualValue: string, expectedValue: string): boolean {
+  const normalizedActual = normalizeText(actualValue);
+  const normalizedExpected = normalizeText(expectedValue);
+  if (normalizedActual.includes(normalizedExpected)) {
+    return true;
+  }
+  const hasStructuredSeparator = /[/＞>→]/.test(actualValue) || /[/＞>→]/.test(expectedValue);
+  if (!hasStructuredSeparator) {
+    return false;
+  }
+  return normalizeStructuredText(actualValue).includes(normalizeStructuredText(expectedValue));
+}
+
+function resolveColumnValue(
+  columnValues: Record<string, string>,
+  column: string,
+): string | undefined {
+  if (columnValues[column]) {
+    return columnValues[column];
+  }
+  const targetKey = normalizeLookupKey(column);
+  const entries = Object.entries(columnValues);
+  for (let i = 0; i < entries.length; i += 1) {
+    const [key, value] = entries[i];
+    if (normalizeLookupKey(key) === targetKey && value) {
+      return value;
+    }
+  }
+  for (let i = 0; i < entries.length; i += 1) {
+    const [key, value] = entries[i];
+    const normalizedKey = normalizeLookupKey(key);
+    if (
+      value &&
+      (normalizedKey.includes(targetKey) || targetKey.includes(normalizedKey))
+    ) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function formatColumnAssertionDetail(
+  expectedColumnMap: Record<string, string>,
+  actualColumnValues?: Record<string, string>,
+  missingColumns?: string[],
+  mismatchedColumns?: string[],
+): string {
+  const parts: string[] = [];
+  if (missingColumns?.length) {
+    parts.push(`缺少列：${missingColumns.join('、')}`);
+  }
+  if (mismatchedColumns?.length) {
+    const mismatchText = mismatchedColumns
+      .map((column) => {
+        const expected = expectedColumnMap[column] || '';
+        const actual = actualColumnValues?.[column] || '';
+        return `${column}[expected=${expected}; actual=${actual}]`;
+      })
+      .join('；');
+    parts.push(`列值不匹配：${mismatchText}`);
+  }
+  return parts.join('；');
+}
+
 async function matchRowByCellValue(
   row: Locator,
   cellValue: string,
@@ -1284,6 +1365,166 @@ async function detectTableRowExists(
   return { found: false };
 }
 
+async function extractRowColumnValues(
+  row: Locator,
+): Promise<{ rowText: string; columnValues: Record<string, string> }> {
+  return row.evaluate((element) => {
+    const normalize = (value: string | null | undefined): string =>
+      (value || '').replace(/\s+/g, ' ').trim();
+    const rowEl = element as HTMLElement;
+
+    const readTexts = (elements: Element[]): string[] =>
+      elements
+        .map((item) => normalize((item as HTMLElement).innerText || item.textContent))
+        .filter((item) => item.length > 0);
+
+    const cellSelectors = [
+      ':scope > td',
+      ':scope > th',
+      ':scope > [role="cell"]',
+      ':scope > .ant-table-cell',
+      ':scope > .ivu-table-cell',
+      ':scope > .cell',
+    ];
+    let cellTexts: string[] = [];
+    for (let i = 0; i < cellSelectors.length; i += 1) {
+      const cells = readTexts(Array.from(rowEl.querySelectorAll(cellSelectors[i])));
+      if (cells.length > 0) {
+        cellTexts = cells;
+        break;
+      }
+    }
+    if (cellTexts.length === 0) {
+      cellTexts = readTexts(Array.from(rowEl.children));
+    }
+
+    const isTableContainer = (node: Element | null): node is HTMLElement => {
+      if (!node || !(node instanceof HTMLElement)) {
+        return false;
+      }
+      const className = `${node.className || ''}`.toLowerCase();
+      const role = `${node.getAttribute('role') || ''}`.toLowerCase();
+      return (
+        node.tagName === 'TABLE' ||
+        role === 'table' ||
+        className.includes('el-table') ||
+        className.includes('ant-table') ||
+        className.includes('ivu-table')
+      );
+    };
+
+    let container: HTMLElement | null = null;
+    let current: HTMLElement | null = rowEl;
+    while (current) {
+      if (isTableContainer(current)) {
+        container = current;
+        if (current.tagName !== 'TABLE') {
+          break;
+        }
+      }
+      current = current.parentElement;
+    }
+    const headerSelectors = [
+      'thead th',
+      '.el-table__header th',
+      '.ant-table-thead th',
+      '.ivu-table-header th',
+      '[role="columnheader"]',
+    ];
+    let headerTexts: string[] = [];
+    if (container) {
+      for (let i = 0; i < headerSelectors.length; i += 1) {
+        const headers = readTexts(Array.from(container.querySelectorAll(headerSelectors[i])));
+        if (headers.length > 0) {
+          headerTexts = headers;
+          break;
+        }
+      }
+    }
+
+    const columnValues: Record<string, string> = {};
+    const columnCount = Math.min(headerTexts.length, cellTexts.length);
+    for (let i = 0; i < columnCount; i += 1) {
+      const header = headerTexts[i];
+      const cell = cellTexts[i];
+      if (header && !(header in columnValues)) {
+        columnValues[header] = cell;
+      }
+    }
+
+    return {
+      rowText: normalize(rowEl.innerText || rowEl.textContent),
+      columnValues,
+    };
+  });
+}
+
+async function detectTableRowColumnValues(
+  page: Page,
+  rowValue: string,
+  columns: string[],
+  timeoutMs: number,
+  opts?: {
+    tableSelectors?: string[];
+    matchMode?: RowMatchMode;
+  },
+): Promise<{
+  found: boolean;
+  rowText?: string;
+  columnValues?: Record<string, string>;
+  missingColumns?: string[];
+}> {
+  const normalizedValue = normalizeText(rowValue);
+  if (!normalizedValue) {
+    return { found: false };
+  }
+  const deadline = Date.now() + timeoutMs;
+  const tableSelectors = opts?.tableSelectors?.length
+    ? opts.tableSelectors
+    : DEFAULT_TABLE_ROW_SELECTORS;
+  const matchMode = resolveRowMatchMode(opts?.matchMode);
+
+  while (Date.now() < deadline) {
+    try {
+      for (let i = 0; i < tableSelectors.length; i += 1) {
+        const rows = page.locator(tableSelectors[i]);
+        const count = await rows.count();
+        for (let j = 0; j < count; j += 1) {
+          const row = rows.nth(j);
+          if (!(await row.isVisible())) {
+            continue;
+          }
+          if (!(await matchRowByCellValue(row, normalizedValue, matchMode))) {
+            continue;
+          }
+          const rowSnapshot = await extractRowColumnValues(row);
+          const columnValues: Record<string, string> = {};
+          const missingColumns: string[] = [];
+          for (let k = 0; k < columns.length; k += 1) {
+            const column = columns[k];
+            const actualValue = resolveColumnValue(rowSnapshot.columnValues, column);
+            if (actualValue === undefined) {
+              missingColumns.push(column);
+              continue;
+            }
+            columnValues[column] = actualValue;
+          }
+          return {
+            found: true,
+            rowText: rowSnapshot.rowText,
+            columnValues,
+            missingColumns,
+          };
+        }
+      }
+    } catch (_error) {
+      // 忽略检测异常，继续轮询
+    }
+    await page.waitForTimeout(ASSERTION_POLL_INTERVAL_MS);
+  }
+  return { found: false };
+}
+
 /**
  * 带重试的断言执行器
  */
@@ -1294,10 +1535,12 @@ async function executeAssertionWithRetry<T>(
   delayMs: number = 1000,
 ): Promise<{ success: boolean; result?: T; attempts: number }> {
   let attempts = 0;
+  let lastResult: T | undefined;
   while (attempts <= retryCount) {
     attempts += 1;
     try {
       const result = await executor();
+      lastResult = result;
       if (validator(result)) {
         return { success: true, result, attempts };
       }
@@ -1308,7 +1551,7 @@ async function executeAssertionWithRetry<T>(
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
-  return { success: false, attempts };
+  return { success: false, result: lastResult, attempts };
 }
 
 /**
@@ -1450,6 +1693,48 @@ async function runAssertion(
       );
     }
 
+    const pwResult = await executeAssertionWithRetry(
+      async () => {
+        const queryResult = await detectTableRowColumnValues(
+          runner.page,
+          expectedValue,
+          expectedColumns,
+          timeoutMs / 2,
+          {
+            tableSelectors,
+            matchMode: resolveRowMatchMode(assertion.matchMode),
+          },
+        );
+        if (!queryResult.found || queryResult.missingColumns?.length) {
+          return queryResult;
+        }
+        const actualColumnValues = queryResult.columnValues || {};
+        const mismatchedColumns = expectedColumns.filter(
+          (column) =>
+            !isExactComparableMatch(
+              actualColumnValues[column] || '',
+              expectedColumnMap[column] || '',
+            ),
+        );
+        return {
+          ...queryResult,
+          allMatched: mismatchedColumns.length === 0,
+          mismatchedColumns,
+        };
+      },
+      (r) =>
+        r.found === true &&
+        (!r.missingColumns || r.missingColumns.length === 0) &&
+        r.allMatched === true,
+      retryCount,
+      1000,
+    );
+    if (pwResult.success) {
+      console.log(`[断言通过] table-cell-equals (Playwright检测)`);
+      return;
+    }
+
+    console.log(`[断言降级] table-cell-equals 使用AI断言`);
     const aiResult = await executeAssertionWithRetry(
       async () => {
         const queryResult = await runner.aiQuery<{
@@ -1477,8 +1762,27 @@ async function runAssertion(
       return;
     }
 
+    const pwDetail = pwResult.result
+      ? formatColumnAssertionDetail(
+          expectedColumnMap,
+          pwResult.result.columnValues,
+          pwResult.result.missingColumns,
+          pwResult.result.mismatchedColumns,
+        )
+      : '';
+    const aiDetail = aiResult.result
+      ? formatColumnAssertionDetail(
+          expectedColumnMap,
+          aiResult.result.columnValues,
+          [],
+          aiResult.result.mismatchedColumns,
+        )
+      : '';
+    const detailText = uniqueNonEmpty([pwDetail, aiDetail]).join('；');
     throw new Error(
-      `表格单元格断言失败：未能验证"${assertion.matchField}"为"${expectedValue}"的行中相关列的值。`,
+      `表格单元格断言失败：未能验证"${assertion.matchField}"为"${expectedValue}"的行中相关列的值。${
+        detailText ? ` 详情：${detailText}` : ''
+      }`,
     );
   }
 
@@ -1502,6 +1806,38 @@ async function runAssertion(
       );
     }
 
+    const pwResult = await executeAssertionWithRetry(
+      async () => {
+        const queryResult = await detectTableRowColumnValues(
+          runner.page,
+          matchValue,
+          [assertion.column],
+          timeoutMs / 2,
+          {
+            tableSelectors,
+            matchMode: resolveRowMatchMode(assertion.matchMode),
+          },
+        );
+        const actualValue = queryResult.columnValues?.[assertion.column] || '';
+        return {
+          ...queryResult,
+          cellValue: actualValue,
+          contains: isContainsComparableMatch(actualValue, expectedValue),
+        };
+      },
+      (r) =>
+        r.found === true &&
+        (!r.missingColumns || r.missingColumns.length === 0) &&
+        r.contains === true,
+      retryCount,
+      1000,
+    );
+    if (pwResult.success) {
+      console.log(`[断言通过] table-cell-contains (Playwright检测)`);
+      return;
+    }
+
+    console.log(`[断言降级] table-cell-contains 使用AI断言`);
     const aiResult = await executeAssertionWithRetry(
       async () => {
         const queryResult = await runner.aiQuery<{
@@ -1524,8 +1860,12 @@ async function runAssertion(
       return;
     }
 
+    const actualValue =
+      pwResult.result?.cellValue || aiResult.result?.cellValue || '';
     throw new Error(
-      `表格单元格包含断言失败：列"${assertion.column}"未包含"${expectedValue}"。`,
+      `表格单元格包含断言失败：列"${assertion.column}"未包含"${expectedValue}"。${
+        actualValue ? ` 实际值：${actualValue}` : ''
+      }`,
     );
   }
 
@@ -2167,11 +2507,15 @@ export async function runTaskScenario(
         '检查提交提示',
         async () => {
           const successText = task.form.successText!;
-          await waitVisibleByText(
+          const toastResult = await detectTextVisible(
             runner.page,
             successText,
             8000,
+            resolveToastSelectors(task),
           );
+          if (!toastResult.found) {
+            throw new Error(`未检测到提交提示：${successText}`);
+          }
         },
         { required: false },
       );
