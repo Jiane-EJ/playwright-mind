@@ -3,6 +3,7 @@ import path from 'path';
 import type { Locator, Page } from '@playwright/test';
 import type { PlayWrightAiFixtureType } from '@midscene/web/playwright';
 import { acceptanceResultDir, resolveRuntimePath } from '../../config/runtime-path';
+import { createStage2PersistenceStore } from '../persistence/stage2-store';
 import { loadTask, resolveTaskFilePath } from './task-loader';
 import type {
   AcceptanceTask,
@@ -2319,6 +2320,7 @@ export async function runTaskScenario(
   options?: RunnerOptions,
 ): Promise<Stage2ExecutionResult> {
   const taskFilePath = resolveTaskFilePath(options?.rawTaskFilePath);
+  const rawTaskContent = fs.readFileSync(taskFilePath, 'utf-8');
   const task = loadTask(taskFilePath);
   const requireApproval = process.env.STAGE2_REQUIRE_APPROVAL === 'true';
   if (requireApproval && !task.approval?.approved) {
@@ -2337,6 +2339,13 @@ export async function runTaskScenario(
   const screenshotOnStep = task.runtime?.screenshotOnStep === true;
   const resultFile = path.join(runDir, 'result.json');
   const progressFile = path.join(runDir, 'result.partial.json');
+  const persistenceStore = createStage2PersistenceStore({
+    task,
+    taskFilePath,
+    rawTaskContent,
+    startedAt,
+    runDir,
+  });
 
   const writeProgress = (
     inProgress: boolean,
@@ -2358,6 +2367,14 @@ export async function runTaskScenario(
       steps,
     };
     fs.writeFileSync(progressFile, JSON.stringify(payload, null, 2), 'utf-8');
+    persistenceStore?.syncProgress({
+      status,
+      inProgress,
+      resolvedValues,
+      querySnapshots,
+      steps,
+      progressFilePath: progressFile,
+    });
   };
 
   writeProgress(true, 'passed');
@@ -2397,6 +2414,10 @@ export async function runTaskScenario(
       stepResult.durationMs = endedOnError - stepStartedAt;
       steps.push(stepResult);
       writeProgress(true, required ? 'failed' : 'passed');
+      persistenceStore?.recordStep({
+        stepNo: steps.length,
+        stepResult,
+      });
       if (required) {
         throw error;
       }
@@ -2407,6 +2428,10 @@ export async function runTaskScenario(
     stepResult.durationMs = stepEndedAt - stepStartedAt;
     steps.push(stepResult);
     writeProgress(true, 'passed');
+    persistenceStore?.recordStep({
+      stepNo: steps.length,
+      stepResult,
+    });
   };
 
   let finalStatus: 'passed' | 'failed' = 'passed';
@@ -2625,5 +2650,7 @@ export async function runTaskScenario(
 
   fs.writeFileSync(resultFile, JSON.stringify(result, null, 2), 'utf-8');
   writeProgress(false, finalStatus);
+  persistenceStore?.finishRun(result, resultFile);
+  persistenceStore?.close();
   return result;
 }

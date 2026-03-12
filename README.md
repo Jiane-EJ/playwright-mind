@@ -114,6 +114,8 @@ STAGE2_CAPTCHA_WAIT_TIMEOUT_MS=120000
 * 数据库只存结构化信息和文件路径，不直接保存大文件二进制
 * 当前实现脚本基于 Node `node:sqlite`，运行时需加 `--experimental-sqlite`
 * 当前仅落地本地 `sqlite` 驱动，MySQL 连接能力将在后续阶段补充
+* 第二段执行器已接入运行主记录、步骤、快照和核心附件写库
+* 任务版本入库时会对 `account.password` 做掩码处理，原始任务文件仍以文件路径形式保留
 
 初始化数据库：
 
@@ -175,6 +177,16 @@ npm run stage2:run:headed
 * 第二段过程快照：`t_runtime/acceptance-results/<taskId>/<timestamp>/result.partial.json`
 * 第二段步骤截图：`t_runtime/acceptance-results/<taskId>/<timestamp>/screenshots/`
 
+同时会写入本地数据库：
+
+* `ai_task`
+* `ai_task_version`
+* `ai_run`
+* `ai_run_step`
+* `ai_snapshot`
+* `ai_artifact`
+* `ai_audit_log`
+
 ## 跨平台通用配置（Stage2）
 
 为支持多个 Web 平台接入，任务 JSON 支持以下通用化字段：
@@ -195,6 +207,7 @@ npm run stage2:run:headed
 | AI 自主代理验收系统改造方案 | 已完成文档 | 见 `.tasks/AI自主代理验收系统开发改造方案_2026-03-11.md` |
 | 任务输入 JSON 模板 | 已完成模板 | 见 `specs/tasks/` |
 | 第二段最小执行器（JSON 驱动） | 已完成 | 入口 `tests/generated/stage2-acceptance-runner.spec.ts` |
+| 第二段数据持久化 | 已完成代码接入 | 已接入运行、步骤、快照、附件路径写库 |
 | 目录结构整理（运行产物收敛） | 已完成 | 运行目录统一归档到 `t_runtime/` |
 | 登录滑块验证码自动处理 | 已完成 | AI + Playwright 自动识别并拖动滑块 |
 | 全局数据持久化底座 | 已完成基础创建 | 已新增数据库配置、migration 与初始化脚本 |
