@@ -30,6 +30,21 @@ function uniqueFieldCandidates(candidates: Stage1FieldCandidate[]): Stage1FieldC
   return [...record.values()];
 }
 
+function uniqueRowSamples(rows: string[][]): string[][] {
+  const record = new Map<string, string[]>();
+  rows.forEach((row) => {
+    const normalizedRow = uniqueNonEmpty(row).slice(0, 20);
+    if (normalizedRow.length === 0) {
+      return;
+    }
+    const key = normalizedRow.join('||');
+    if (!record.has(key)) {
+      record.set(key, normalizedRow);
+    }
+  });
+  return [...record.values()];
+}
+
 /**
  * 通过页面可见 DOM 采集第一段结构化探索结果。
  * @author Jiane
@@ -73,6 +88,50 @@ export async function collectStage1StructuredSnapshot(
         });
       });
       return result.slice(0, limit);
+    }
+
+    function collectTableRowSamples(limitRows: number, limitCells: number): string[][] {
+      const rowSelectors = [
+        'table tbody tr',
+        '.el-table__body tr',
+        '.ant-table-tbody tr',
+        '.ivu-table-body tr',
+      ];
+      const result: string[][] = [];
+      const seen = new Set<string>();
+      for (let i = 0; i < rowSelectors.length; i += 1) {
+        const rows = Array.from(document.querySelectorAll(rowSelectors[i]));
+        for (let j = 0; j < rows.length; j += 1) {
+          if (result.length >= limitRows) {
+            return result;
+          }
+          const row = rows[j];
+          if (!isVisible(row)) {
+            continue;
+          }
+          const cells = Array.from(
+            row.querySelectorAll('td, .el-table__cell, .ant-table-cell, .ivu-table-cell'),
+          );
+          const cellTexts = cells
+            .map((cell) => normalize(cell.textContent || ''))
+            .filter((text) => text.length > 0)
+            .slice(0, limitCells);
+          if (cellTexts.length === 0) {
+            const rowText = normalize(row.textContent || '');
+            if (!rowText) {
+              continue;
+            }
+            cellTexts.push(rowText);
+          }
+          const rowKey = cellTexts.join('||');
+          if (seen.has(rowKey)) {
+            continue;
+          }
+          seen.add(rowKey);
+          result.push(cellTexts);
+        }
+      }
+      return result;
     }
 
     function findFieldLabel(input: HTMLInputElement | HTMLTextAreaElement): string {
@@ -132,11 +191,22 @@ export async function collectStage1StructuredSnapshot(
       300,
     );
 
+    const linkTexts = collectTextsBySelectors(
+      [
+        'a',
+        '[role="link"]',
+        '.el-link',
+      ],
+      300,
+    );
+
     const formFieldCandidates: Array<{
       label: string;
       placeholder?: string;
       required?: boolean;
     }> = [];
+    const dateFieldCandidates: string[] = [];
+    const selectLikeFieldCandidates: string[] = [];
     const inputs = Array.from(document.querySelectorAll('input, textarea'));
     inputs.forEach((node) => {
       if (!isVisible(node)) {
@@ -154,7 +224,69 @@ export async function collectStage1StructuredSnapshot(
         placeholder: placeholder || undefined,
         required,
       });
+      const fieldDisplay = normalize(label || placeholder || '');
+      if (
+        fieldDisplay
+        && (
+          /日期|时间|date|time/i.test(fieldDisplay)
+          || /datepicker|timepicker/i.test(node.className || '')
+        )
+      ) {
+        dateFieldCandidates.push(fieldDisplay);
+      }
+      if (
+        fieldDisplay
+        && (
+          (input as HTMLInputElement).readOnly
+          || /请选择|下拉|级联|城市|地区/.test(placeholder)
+          || /select|cascader/i.test(node.className || '')
+        )
+      ) {
+        selectLikeFieldCandidates.push(fieldDisplay);
+      }
     });
+
+    function collectOptionCandidates(
+      selectorList: string[],
+      fallbackInputSelector: string,
+    ): string[] {
+      const texts = collectTextsBySelectors(selectorList, 300);
+      if (texts.length > 0) {
+        return texts;
+      }
+      const result: string[] = [];
+      const inputs = Array.from(document.querySelectorAll(fallbackInputSelector));
+      inputs.forEach((item) => {
+        if (!isVisible(item)) {
+          return;
+        }
+        const candidate = normalize((item.closest('label')?.textContent || item.getAttribute('aria-label') || ''));
+        if (candidate) {
+          result.push(candidate);
+        }
+      });
+      return result;
+    }
+
+    const radioCandidates = collectOptionCandidates(
+      [
+        '.el-radio',
+        '.ant-radio-wrapper',
+        '.ivu-radio-wrapper',
+        '[role="radio"]',
+      ],
+      'input[type="radio"]',
+    );
+
+    const checkboxCandidates = collectOptionCandidates(
+      [
+        '.el-checkbox',
+        '.ant-checkbox-wrapper',
+        '.ivu-checkbox-wrapper',
+        '[role="checkbox"]',
+      ],
+      'input[type="checkbox"]',
+    );
 
     const tableColumns = collectTextsBySelectors(
       [
@@ -215,11 +347,19 @@ export async function collectStage1StructuredSnapshot(
       400,
     );
 
+    const tableRowSamples = collectTableRowSamples(12, 16);
+
     return {
       menuTexts,
       buttonTexts,
+      linkTexts,
       formFieldCandidates,
+      dateFieldCandidates,
+      radioCandidates,
+      checkboxCandidates,
+      selectLikeFieldCandidates,
       tableColumns,
+      tableRowSamples,
       dialogTitles,
       rowActionButtons,
       toastTexts,
@@ -229,6 +369,7 @@ export async function collectStage1StructuredSnapshot(
 
   const menuCandidates = uniqueNonEmpty(rawSnapshot.menuTexts || []);
   const buttonTexts = uniqueNonEmpty(rawSnapshot.buttonTexts || []);
+  const linkCandidates = uniqueNonEmpty(rawSnapshot.linkTexts || []);
   const openButtonCandidates = buttonTexts.filter((item) => /(新增|添加|新建|创建)/.test(item));
   const submitButtonCandidates = buttonTexts.filter((item) => /(确定|提交|保存|确认)/.test(item));
   const closeButtonCandidates = buttonTexts.filter((item) => /(取消|关闭|返回)/.test(item));
@@ -247,6 +388,11 @@ export async function collectStage1StructuredSnapshot(
       .filter((item) => item.label.length > 0),
   );
 
+  const dateFieldCandidates = uniqueNonEmpty(rawSnapshot.dateFieldCandidates || []);
+  const radioCandidates = uniqueNonEmpty(rawSnapshot.radioCandidates || []);
+  const checkboxCandidates = uniqueNonEmpty(rawSnapshot.checkboxCandidates || []);
+  const selectLikeFieldCandidates = uniqueNonEmpty(rawSnapshot.selectLikeFieldCandidates || []);
+
   const searchFieldCandidates = uniqueNonEmpty(
     formFieldCandidates
       .map((item) => item.label)
@@ -254,6 +400,7 @@ export async function collectStage1StructuredSnapshot(
   );
 
   const tableColumnCandidates = uniqueNonEmpty(rawSnapshot.tableColumns || []);
+  const tableRowSamples = uniqueRowSamples(rawSnapshot.tableRowSamples || []).slice(0, 12);
   const successTextCandidates = uniqueNonEmpty(
     [
       ...(rawSnapshot.toastTexts || []),
@@ -280,6 +427,9 @@ export async function collectStage1StructuredSnapshot(
   if (tableColumnCandidates.length === 0) {
     uncertainties.push('未识别到表格列，请人工补齐 search.expectedColumns');
   }
+  if (tableRowSamples.length === 0) {
+    uncertainties.push('未识别到表格样例行，级联/地址等字段值可能缺少可参考样本');
+  }
   if (dialogTitleCandidates.length === 0) {
     uncertainties.push('未识别到弹窗标题，请人工确认 dialogTitle');
   }
@@ -291,6 +441,7 @@ export async function collectStage1StructuredSnapshot(
     pageTitle: normalizeText(pageTitle),
     currentUrl: normalizeText(currentUrl),
     menuCandidates,
+    linkCandidates,
     openButtonCandidates,
     submitButtonCandidates,
     closeButtonCandidates,
@@ -300,8 +451,13 @@ export async function collectStage1StructuredSnapshot(
     rowActionButtonCandidates,
     successTextCandidates,
     formFieldCandidates,
+    dateFieldCandidates,
+    radioCandidates,
+    checkboxCandidates,
+    selectLikeFieldCandidates,
     searchFieldCandidates,
     tableColumnCandidates,
+    tableRowSamples,
     visibleTexts,
     notes,
     uncertainties,

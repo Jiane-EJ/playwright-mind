@@ -52,6 +52,8 @@ STAGE1_REQUEST_FILE=specs/stage1/stage1-request.community-create.example.json
 STAGE1_BRIEF_FILE=specs/stage1/stage1-brief.txt
 STAGE1_CAPTCHA_MODE=auto
 STAGE1_CAPTCHA_WAIT_TIMEOUT_MS=120000
+STAGE1_EXPLORATION_MODE=deep
+STAGE1_INTERACTION_TARGETS=按钮,超链接,输入框,文本域,日期框,单选框,多选框,下拉框,级联下拉框
 STAGE2_TASK_FILE=specs/tasks/acceptance-task.community-create.example.json
 STAGE2_REQUIRE_APPROVAL=false
 STAGE2_CAPTCHA_MODE=auto
@@ -65,6 +67,12 @@ STAGE2_CAPTCHA_WAIT_TIMEOUT_MS=120000
 * `ignore`：忽略滑块检测（不建议）
 
 `STAGE1_CAPTCHA_WAIT_TIMEOUT_MS` / `STAGE2_CAPTCHA_WAIT_TIMEOUT_MS`：`manual` 模式下人工处理等待时长（毫秒）。
+
+第一段探索模式说明（`STAGE1_EXPLORATION_MODE`）：
+* `deep`：深度探索控件（默认），会尝试覆盖按钮、超链接、输入框、文本域、日期、单选、多选、下拉、级联等交互元素
+* `basic`：基础探索，仅执行最小导航和摘要采集
+
+`STAGE1_INTERACTION_TARGETS`：深度探索目标控件，逗号分隔。
 
 ### 滑块验证码自动处理
 
@@ -193,8 +201,9 @@ npm run stage1:run:headed
 ```
 
 第一段登录验证码处理由 `STAGE1_CAPTCHA_MODE` 控制（默认 `auto`）。
-验证码处理后会校验是否已离开登录态；若验证码弹窗关闭但仍停留登录页，会直接判定失败，避免假成功。
+验证码处理后会校验是否已离开登录态；若验证码弹窗关闭但仍停留登录页，会自动重试一次登录并再次处理验证码，仍失败才终止，避免假成功。
 第一段会按 `scope.menuPathHints` 尝试导航到目标菜单，并尝试打开“新增/添加”入口做探索；但不会提交新增数据。
+第一段默认启用深度探索模式（`deep`），会尝试在无副作用前提下覆盖常见交互控件；如不需要可切换为 `basic`。
 
 执行后将生成：
 
@@ -205,6 +214,13 @@ npm run stage1:run:headed
 * 第一段字段映射报告：`t_runtime/stage1-results/<requestId>/<timestamp>/evidence/mapping-report.json`
 * 第二段草稿任务：`t_runtime/stage1-results/<requestId>/<timestamp>/draft.acceptance-task.json`
 * 人工复核说明：`t_runtime/stage1-results/<requestId>/<timestamp>/review-notes.md`
+
+## 第一段通用化规则
+
+* 第一段草稿生成是通用能力，禁止按“新增小区”等单一场景写死字段和断言
+* 第一段会对字段标签做标准化与去重，优先输出更规范的第二段草稿结构
+* 第一段会优先用结构化样例（如表格行）推断可执行字段值（如省市区、地址、联系方式），无法确认时再保守标注待确认
+* 第二段执行前，必须先人工复核 `mapping-report.json` 与 `review-notes.md`
 
 ## 第一段到第二段交接（Day7 最小联调）
 
@@ -283,8 +299,8 @@ npm run stage2:run:headed
 | AI 自主代理验收系统改造方案 | 已完成文档 | 见 `.tasks/AI自主代理验收系统开发改造方案_2026-03-11.md` |
 | 第一段完整开发计划 | 已完成文档 | 见 `.plans/第一段探索建模最小改动开发方案_2026-03-13.md` 与 `.tasks/第一段探索建模每日开发计划_2026-03-13.md` |
 | 第一段最小入口骨架 | 已完成基础代码 | 已新增 `src/stage1` 最小执行器与 `tests/generated/stage1-discovery-runner.spec.ts` |
-| 第一段结构化探索摘要 | 已完成基础代码 | 已支持 DOM 结构化提取并输出 `structured-snapshot.json` |
-| 第一段字段映射策略 | 已完成基础代码 | 已支持列-字段自动映射并输出 `mapping-report.json` |
+| 第一段结构化探索摘要 | 已完成增强 | 已支持 DOM 结构化提取、表格样例行与控件候选摘要输出 |
+| 第一段字段映射策略 | 已完成增强 | 已支持字段标准化去重、映射优先级优化和基础值推断 |
 | 第一段数据持久化（Day6） | 已完成代码接入 | 已接入第一段运行、步骤、快照、附件路径写库 |
 | 第一段自然语言请求转 JSON | 已完成基础代码 | 已支持固定 brief 文件（默认 `specs/stage1/stage1-brief.txt`）及文本/HTML 生成 `stage1-request.generated.json` |
 | 第一段登录验证码处理 | 已完成代码接入 | 已支持 `STAGE1_CAPTCHA_MODE` 自动/人工/失败/忽略策略 |

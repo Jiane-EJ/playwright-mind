@@ -1,5 +1,5 @@
 {
-  "requestId": "stage1-auto-20260313170958",
+  "requestId": "stage1-auto-20260313202818",
   "requestName": "第一段-自动生成探索建模请求",
   "target": {
     "url": "https://wyt-pf-test.fuioupay.com/",
@@ -34,6 +34,18 @@
     ],
     "skipAreas": [
       "与本场景无关菜单"
+    ],
+    "explorationDepth": "deep",
+    "interactionTargets": [
+      "按钮",
+      "超链接",
+      "输入框",
+      "文本域",
+      "日期框",
+      "单选框",
+      "多选框",
+      "下拉框",
+      "级联下拉框"
     ]
   },
   "review": {

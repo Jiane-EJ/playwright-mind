@@ -16,6 +16,14 @@
 - [playwright.config.ts](file://playwright.config.ts)
 </cite>
 
+## 更新摘要
+**变更内容**
+- 新增了从简单文本描述生成结构化JSON请求的完整功能
+- 增强了表单字段映射策略，支持自动识别和推断字段类型
+- 完善了断言策略生成机制，包括Toast通知、表格行存在性和单元格断言
+- 添加了清理程序配置，支持任务执行后的数据清理策略
+- 优化了模板处理系统，支持环境变量和时间戳替换
+
 ## 目录
 1. [简介](#简介)
 2. [项目结构](#项目结构)
@@ -32,6 +40,8 @@
 "第一段自然语言请求转JSON"是Playwright-Mind项目中的一个关键功能模块，负责将人类可读的自然语言描述转换为机器可执行的JSON格式请求。该功能允许用户通过简单的文本描述来定义自动化测试场景，系统会自动解析这些描述并生成标准化的请求对象。
 
 该项目基于Playwright和Midscene.js构建，提供了完整的AI自动化测试解决方案。第一段功能专注于从自然语言到JSON的转换，为后续的页面探索和任务执行奠定基础。
+
+**更新** 新增了完整的表单字段映射、断言策略和清理程序生成功能，使生成的JSON请求更加结构化和可执行。
 
 ## 项目结构
 
@@ -70,7 +80,7 @@ D --> I
 
 **图表来源**
 - [generate-request.mjs:1-308](file://scripts/stage1/generate-request.mjs#L1-L308)
-- [stage1-runner.ts:1-632](file://src/stage1/stage1-runner.ts#L1-L632)
+- [stage1-runner.ts:1-846](file://src/stage1/stage1-runner.ts#L1-L846)
 - [request-loader.ts:1-89](file://src/stage1/request-loader.ts#L1-L89)
 
 **章节来源**
@@ -88,6 +98,9 @@ D --> I
 - **智能提取**：自动识别URL、账号密码、测试要求等关键信息
 - **模板处理**：支持环境变量和时间戳模板
 - **错误处理**：提供详细的错误信息和回退机制
+- **结构化生成**：生成包含表单字段映射、断言策略和清理程序的完整请求
+
+**更新** 新增了从测试场景描述中提取菜单路径提示和必须探索区域的功能，为后续的页面探索提供精确指导。
 
 ### 请求加载器 (request-loader.ts)
 
@@ -106,7 +119,7 @@ D --> I
 **章节来源**
 - [generate-request.mjs:1-308](file://scripts/stage1/generate-request.mjs#L1-L308)
 - [request-loader.ts:1-89](file://src/stage1/request-loader.ts#L1-L89)
-- [types.ts:1-109](file://src/stage1/types.ts#L1-L109)
+- [types.ts:1-117](file://src/stage1/types.ts#L1-L117)
 
 ## 架构概览
 
@@ -172,6 +185,9 @@ Error --> End
 2. **账号密码提取**：支持多种格式的账号密码识别
 3. **菜单路径提取**：从测试场景描述中识别菜单导航路径
 4. **场景描述提取**：标准化测试要求文本
+5. **必须探索区域**：根据测试场景自动推断需要探索的功能区域
+
+**更新** 新增了从测试场景描述中提取菜单路径提示和必须探索区域的功能，为页面探索提供精确指导。
 
 **章节来源**
 - [generate-request.mjs:140-177](file://scripts/stage1/generate-request.mjs#L140-L177)
@@ -243,7 +259,7 @@ stateDiagram-v2
 ```
 
 **图表来源**
-- [stage1-runner.ts:367-632](file://src/stage1/stage1-runner.ts#L367-L632)
+- [stage1-runner.ts:367-846](file://src/stage1/stage1-runner.ts#L367-L846)
 
 #### 错误处理策略
 
@@ -254,9 +270,56 @@ stateDiagram-v2
 3. **进度保存**：定期保存执行进度，支持断点续跑
 4. **状态追踪**：完整记录每个步骤的开始、结束和状态
 
+**更新** 新增了验证码自动处理功能，支持滑块验证码的自动识别和拖动。
+
 **章节来源**
 - [stage1-runner.ts:443-490](file://src/stage1/stage1-runner.ts#L443-L490)
 - [stage1-runner.ts:492-584](file://src/stage1/stage1-runner.ts#L492-L584)
+
+### 草稿生成器深度分析
+
+#### 表单字段映射策略
+
+**更新** 新增了完整的表单字段映射功能，能够自动识别和推断字段类型：
+
+```mermaid
+flowchart TD
+FormFieldCandidates[表单字段候选] --> GuessType[猜测字段类型]
+GuessType --> Cascader[级联选择器]
+GuessType --> TextArea[文本域]
+GuessType --> Input[输入框]
+FormFieldCandidates --> BuildValue[构建字段值]
+BuildValue --> AreaValue[地址值]
+BuildValue --> NameValue[名称值]
+BuildValue --> Default[默认值]
+FormFieldCandidates --> CreateDraft[创建草稿字段]
+```
+
+**图表来源**
+- [task-draft-generator.ts:67-93](file://src/stage1/task-draft-generator.ts#L67-L93)
+- [task-draft-generator.ts:150-347](file://src/stage1/task-draft-generator.ts#L150-L347)
+
+#### 断言策略生成机制
+
+**更新** 新增了智能断言策略生成，包括多种断言类型的自动配置：
+
+1. **Toast通知断言**：自动检测成功提示文本并生成断言
+2. **表格行存在性断言**：基于主匹配字段生成行存在断言
+3. **表格单元格断言**：根据字段映射关系生成单元格值断言
+4. **软断言策略**：关键断言使用硬断言，次要断言使用软断言
+
+#### 清理程序配置
+
+**更新** 新增了清理程序配置功能，默认禁用清理策略，需要人工补充：
+
+1. **清理策略开关**：默认关闭，需要人工启用
+2. **清理策略类型**：支持多种清理策略
+3. **清理后验证**：可配置清理后的验证逻辑
+4. **清理行匹配模式**：支持精确匹配和包含匹配
+
+**章节来源**
+- [task-draft-generator.ts:178-224](file://src/stage1/task-draft-generator.ts#L178-L224)
+- [task-draft-generator.ts:298-302](file://src/stage1/task-draft-generator.ts#L298-L302)
 
 ## 依赖关系分析
 
@@ -325,6 +388,8 @@ L --> F
 3. **断点续跑**：支持部分失败后的重新执行
 4. **资源复用**：复用已建立的页面连接和会话
 
+**更新** 新增了验证码自动处理优化，支持滑块验证码的智能识别和自动拖动，提高执行效率。
+
 ## 故障排除指南
 
 ### 常见问题及解决方案
@@ -349,6 +414,13 @@ L --> F
 - **解决**：使用--force参数强制覆盖，或手动删除现有文件
 - **预防**：在执行前检查目标文件状态
 
+#### 验证码处理问题
+- **问题**：滑块验证码自动处理失败
+- **解决**：调整STAGE1_CAPTCHA_MODE为manual模式，或增加等待超时时间
+- **预防**：确保网络环境稳定，验证码弹窗能够正常显示
+
+**更新** 新增了验证码处理相关的故障排除指南。
+
 **章节来源**
 - [generate-request.mjs:280-307](file://scripts/stage1/generate-request.mjs#L280-L307)
 - [request-loader.ts:79-89](file://src/stage1/request-loader.ts#L79-L89)
@@ -360,6 +432,9 @@ L --> F
 1. **易用性强**：用户只需提供简单的自然语言描述即可生成复杂的测试请求
 2. **扩展性好**：模块化设计便于功能扩展和维护
 3. **可靠性高**：完善的错误处理和验证机制确保系统的稳定性
-4. **集成度高**：与整个Playwright-Mind生态系统无缝集成
+4. **智能化程度高**：新增的表单字段映射、断言策略和清理程序生成功能，使生成的请求更加智能和可执行
+5. **集成度高**：与整个Playwright-Mind生态系统无缝集成
+
+**更新** 新功能显著提升了从自然语言到结构化JSON的转换质量，特别是表单字段映射、断言策略和清理程序的自动生成，为后续的页面探索和任务执行提供了更精确的指导。
 
 该功能为后续的页面探索和任务执行奠定了坚实的基础，是整个AI自动化测试流程的重要起点。通过持续的优化和改进，该功能将继续为用户提供更好的使用体验。

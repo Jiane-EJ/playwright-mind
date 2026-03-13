@@ -23,6 +23,8 @@ export interface Stage1Scope {
   menuPathHints?: string[];
   mustExploreAreas?: string[];
   skipAreas?: string[];
+  explorationDepth?: 'basic' | 'deep';
+  interactionTargets?: string[];
 }
 
 export interface Stage1Review {
@@ -76,6 +78,7 @@ export interface Stage1StructuredSnapshot {
   pageTitle: string;
   currentUrl: string;
   menuCandidates: string[];
+  linkCandidates: string[];
   openButtonCandidates: string[];
   submitButtonCandidates: string[];
   closeButtonCandidates: string[];
@@ -85,8 +88,13 @@ export interface Stage1StructuredSnapshot {
   rowActionButtonCandidates: string[];
   successTextCandidates: string[];
   formFieldCandidates: Stage1FieldCandidate[];
+  dateFieldCandidates: string[];
+  radioCandidates: string[];
+  checkboxCandidates: string[];
+  selectLikeFieldCandidates: string[];
   searchFieldCandidates: string[];
   tableColumnCandidates: string[];
+  tableRowSamples: string[][];
   visibleTexts: string[];
   notes: string[];
   uncertainties: string[];

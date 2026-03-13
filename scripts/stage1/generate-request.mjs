@@ -13,6 +13,18 @@ const DEFAULT_OUTPUT_FILE = 'specs/stage1/stage1-request.generated.json';
 const DEFAULT_REQUEST_NAME = '第一段-自动生成探索建模请求';
 const DEFAULT_STEP_TIMEOUT_MS = 30000;
 const DEFAULT_PAGE_TIMEOUT_MS = 60000;
+const DEFAULT_EXPLORATION_DEPTH = 'deep';
+const DEFAULT_INTERACTION_TARGETS = [
+  '按钮',
+  '超链接',
+  '输入框',
+  '文本域',
+  '日期框',
+  '单选框',
+  '多选框',
+  '下拉框',
+  '级联下拉框',
+];
 
 function nowStamp() {
   const date = new Date();
@@ -214,6 +226,27 @@ function buildMustExploreAreas(scenarioDescription, menuPathHints) {
   return ['首页', '列表', '新增'];
 }
 
+function resolveExplorationDepth(scenarioDescription) {
+  if (/快速|仅需基础|轻量/.test(scenarioDescription)) {
+    return 'basic';
+  }
+  return DEFAULT_EXPLORATION_DEPTH;
+}
+
+function resolveInteractionTargets(scenarioDescription) {
+  const targets = [...DEFAULT_INTERACTION_TARGETS];
+  if (/日期|时间/.test(scenarioDescription)) {
+    targets.push('日期时间选择器');
+  }
+  if (/单选|多选/.test(scenarioDescription)) {
+    targets.push('选项组');
+  }
+  if (/上传|导入/.test(scenarioDescription)) {
+    targets.push('上传控件');
+  }
+  return uniqueNonEmpty(targets);
+}
+
 function buildRequestPayload(briefText, args) {
   const normalized = normalizeBriefText(briefText);
   const url = extractUrl(normalized);
@@ -224,6 +257,8 @@ function buildRequestPayload(briefText, args) {
     scenarioDescription,
     menuPathHints,
   );
+  const explorationDepth = resolveExplorationDepth(scenarioDescription);
+  const interactionTargets = resolveInteractionTargets(scenarioDescription);
   const requestId = (args.requestId || '').trim() || `stage1-auto-${nowStamp()}`;
   const requestName = (args.requestName || '').trim() || DEFAULT_REQUEST_NAME;
 
@@ -241,7 +276,7 @@ function buildRequestPayload(briefText, args) {
       loginHints: [
         '用户名输入框可能显示为账号、用户名或登录名',
         '密码输入框可能显示为密码',
-        '提交按钮可能显示为登录',
+        '提交按钮可能显示为登录或立即登录',
       ],
     },
     goal: {
@@ -252,6 +287,8 @@ function buildRequestPayload(briefText, args) {
       menuPathHints,
       mustExploreAreas,
       skipAreas: ['与本场景无关菜单'],
+      explorationDepth,
+      interactionTargets,
     },
     review: {
       required: true,
@@ -277,12 +314,21 @@ function writeRequestFile(targetFilePath, payload, force) {
   fs.writeFileSync(targetFilePath, JSON.stringify(payload, null, 2), 'utf-8');
 }
 
+function toRelativeDisplayPath(fullPath) {
+  const relativePath = path.relative(process.cwd(), fullPath);
+  if (!relativePath) {
+    return path.basename(fullPath);
+  }
+  return relativePath.split(path.sep).join('/');
+}
+
 function main() {
   const args = parseCliArgs(process.argv.slice(2));
   const sourceInput = readSourceText(args);
   const payload = buildRequestPayload(sourceInput.text, args);
   const outputFile = (args.output || DEFAULT_OUTPUT_FILE).trim();
   const resolvedOutputFile = path.resolve(process.cwd(), outputFile);
+  const relativeOutputFile = toRelativeDisplayPath(resolvedOutputFile);
   writeRequestFile(resolvedOutputFile, payload, args.force);
 
   const summary = [
@@ -290,7 +336,9 @@ function main() {
     `source=${sourceInput.source}`,
     `requestId=${payload.requestId}`,
     `output=${resolvedOutputFile}`,
-    `next=将 STAGE1_REQUEST_FILE 指向该文件后执行 npm run stage1:run:headed`,
+    `outputRelative=${relativeOutputFile}`,
+    `建议：STAGE1_REQUEST_FILE=${relativeOutputFile}`,
+    '下一步：npm run stage1:run:headed',
   ].join('\n');
   console.log(summary);
 }

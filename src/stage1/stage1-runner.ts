@@ -35,6 +35,20 @@ const CAPTCHA_MODE_IGNORE = 'ignore';
 const DEFAULT_CAPTCHA_MODE = CAPTCHA_MODE_AUTO;
 const DEFAULT_CAPTCHA_WAIT_TIMEOUT_MS = 120000;
 const CAPTCHA_CHECK_INTERVAL_MS = 1000;
+const EXPLORATION_MODE_BASIC = 'basic';
+const EXPLORATION_MODE_DEEP = 'deep';
+const DEFAULT_EXPLORATION_MODE = EXPLORATION_MODE_DEEP;
+const DEFAULT_INTERACTION_TARGETS = [
+  '按钮',
+  '超链接',
+  '输入框',
+  '文本域',
+  '日期框',
+  '单选框',
+  '多选框',
+  '下拉框',
+  '级联下拉框',
+];
 const CAPTCHA_TEXT_PATTERNS = [
   '请完成安全验证',
   '请按住滑块',
@@ -102,6 +116,13 @@ function sanitizeFileName(name: string): string {
   return name.replace(/[^\w.-]/g, '_');
 }
 
+function uniqueNonEmpty(values: string[]): string[] {
+  const filtered = values
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  return [...new Set(filtered)];
+}
+
 function nowStamp(): string {
   const date = new Date();
   const yyyy = String(date.getFullYear());
@@ -118,6 +139,7 @@ function createEmptyStructuredSnapshot(): Stage1StructuredSnapshot {
     pageTitle: '',
     currentUrl: '',
     menuCandidates: [],
+    linkCandidates: [],
     openButtonCandidates: [],
     submitButtonCandidates: [],
     closeButtonCandidates: [],
@@ -127,12 +149,50 @@ function createEmptyStructuredSnapshot(): Stage1StructuredSnapshot {
     rowActionButtonCandidates: [],
     successTextCandidates: [],
     formFieldCandidates: [],
+    dateFieldCandidates: [],
+    radioCandidates: [],
+    checkboxCandidates: [],
+    selectLikeFieldCandidates: [],
     searchFieldCandidates: [],
     tableColumnCandidates: [],
+    tableRowSamples: [],
     visibleTexts: [],
     notes: [],
     uncertainties: [],
   };
+}
+
+function resolveStage1ExplorationMode(request: Stage1Request): 'basic' | 'deep' {
+  const requestMode = (request.scope?.explorationDepth || '').trim().toLowerCase();
+  if (requestMode === EXPLORATION_MODE_BASIC) {
+    return EXPLORATION_MODE_BASIC;
+  }
+  if (requestMode === EXPLORATION_MODE_DEEP) {
+    return EXPLORATION_MODE_DEEP;
+  }
+  const envMode = (process.env.STAGE1_EXPLORATION_MODE || '').trim().toLowerCase();
+  if (envMode === EXPLORATION_MODE_BASIC) {
+    return EXPLORATION_MODE_BASIC;
+  }
+  if (envMode === EXPLORATION_MODE_DEEP) {
+    return EXPLORATION_MODE_DEEP;
+  }
+  return DEFAULT_EXPLORATION_MODE;
+}
+
+function resolveStage1InteractionTargets(request: Stage1Request): string[] {
+  const requestTargets = request.scope?.interactionTargets || [];
+  if (requestTargets.length > 0) {
+    return uniqueNonEmpty(requestTargets);
+  }
+  const envTargets = (process.env.STAGE1_INTERACTION_TARGETS || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  if (envTargets.length > 0) {
+    return uniqueNonEmpty(envTargets);
+  }
+  return DEFAULT_INTERACTION_TARGETS;
 }
 
 function createRunDir(requestId: string): {
@@ -227,6 +287,28 @@ function shouldOpenCreateEntryForExploration(request: Stage1Request): boolean {
   return /新增|新建|添加|录入/.test(description);
 }
 
+async function runDeepExploration(
+  request: Stage1Request,
+  runner: RunnerContext,
+): Promise<void> {
+  const mode = resolveStage1ExplorationMode(request);
+  if (mode !== EXPLORATION_MODE_DEEP) {
+    return;
+  }
+  const targets = resolveStage1InteractionTargets(request);
+  const targetText = targets.join('、');
+  await runner.ai(
+    [
+      `执行第一段深度探索：优先在当前业务弹窗内，其次在当前页面，逐项尝试点击/展开并观察以下控件：${targetText}。`,
+      '禁止点击提交、确定、保存、删除、导入、导出、支付、结算等可能产生副作用的按钮。',
+      '如展开了下拉、日期面板或级联面板，请在观察后收起（可按 Esc）。',
+      '探索目标是补全结构化元素识别范围，而不是提交业务数据。',
+    ].join(''),
+  );
+  await runner.page.keyboard.press('Escape').catch(() => undefined);
+  await runner.page.waitForTimeout(600);
+}
+
 async function isLocatorVisible(locator: Locator): Promise<boolean> {
   try {
     const count = await locator.count();
@@ -256,6 +338,38 @@ async function isLoginFormStillVisible(page: Page): Promise<boolean> {
     ),
   );
   return passwordVisible && (accountVisible || loginButtonVisible);
+}
+
+async function retryLoginSubmitAfterCaptcha(
+  runner: RunnerContext,
+  request: Stage1Request,
+): Promise<boolean> {
+  const buttonLocator = runner.page.locator(
+    [
+      'button:has-text("立即登录")',
+      'button:has-text("登录")',
+      '.el-button:has-text("立即登录")',
+      '.el-button:has-text("登录")',
+      '.ant-btn:has-text("立即登录")',
+      '.ant-btn:has-text("登录")',
+      '[type="submit"]',
+    ].join(', '),
+  );
+  const clicked = await clickFirstVisible(buttonLocator);
+  if (clicked) {
+    await runner.page.waitForTimeout(1200);
+    return true;
+  }
+  try {
+    const hints = (request.account.loginHints || []).join('；');
+    await runner.ai(
+      `当前仍停留在登录页，请不要改动账号密码，仅再次点击登录提交按钮（可能文案为“登录”或“立即登录”）。${hints}`,
+    );
+    await runner.page.waitForTimeout(1200);
+    return true;
+  } catch (_error) {
+    return false;
+  }
 }
 
 async function detectCaptchaChallenge(page: Page): Promise<boolean> {
@@ -606,10 +720,24 @@ export async function runStage1Discovery(
       if (captchaStillFound) {
         throw new Error('安全验证处理后仍检测到验证码弹窗');
       }
-      const loginFormStillVisible = await isLoginFormStillVisible(runner.page);
-      const loginUrlUnchanged = runner.page.url() === loginUrlBeforeCaptcha;
+      await runner.page.waitForTimeout(1500);
+      let loginFormStillVisible = await isLoginFormStillVisible(runner.page);
+      let loginUrlUnchanged = runner.page.url() === loginUrlBeforeCaptcha;
       if (loginFormStillVisible && loginUrlUnchanged) {
-        throw new Error('安全验证弹窗已关闭，但页面仍停留在登录态，疑似未通过验证码');
+        const retried = await retryLoginSubmitAfterCaptcha(runner, request);
+        if (retried) {
+          await handleCaptchaChallengeIfNeeded(runner);
+          const captchaStillFoundAfterRetry = await detectCaptchaChallenge(runner.page);
+          if (captchaStillFoundAfterRetry) {
+            throw new Error('验证码二次处理后仍存在安全验证弹窗');
+          }
+          await runner.page.waitForTimeout(1500);
+          loginFormStillVisible = await isLoginFormStillVisible(runner.page);
+          loginUrlUnchanged = runner.page.url() === loginUrlBeforeCaptcha;
+        }
+      }
+      if (loginFormStillVisible && loginUrlUnchanged) {
+        throw new Error('安全验证弹窗已关闭，且已自动重试登录1次，但页面仍停留在登录态');
       }
     });
 
@@ -634,6 +762,14 @@ export async function runStage1Discovery(
         await runner.ai(
           '在当前页面尝试点击“新增”或“添加”入口，仅用于探索元素；如果出现弹窗，请保持弹窗打开，不要提交。',
         );
+      },
+      { required: false },
+    );
+
+    await runStep(
+      '深度探索交互控件',
+      async () => {
+        await runDeepExploration(request, runner);
       },
       { required: false },
     );
@@ -670,12 +806,18 @@ export async function runStage1Discovery(
           pageTitle: structuredSnapshot.pageTitle,
           currentUrl: structuredSnapshot.currentUrl,
           menuCandidates: structuredSnapshot.menuCandidates.slice(0, 10),
+          linkCandidates: structuredSnapshot.linkCandidates.slice(0, 10),
           openButtonCandidates: structuredSnapshot.openButtonCandidates.slice(0, 10),
           submitButtonCandidates: structuredSnapshot.submitButtonCandidates.slice(0, 10),
           dialogTitleCandidates: structuredSnapshot.dialogTitleCandidates.slice(0, 10),
           searchTriggerCandidates: structuredSnapshot.searchTriggerCandidates.slice(0, 10),
           rowActionButtonCandidates: structuredSnapshot.rowActionButtonCandidates.slice(0, 10),
+          dateFieldCandidates: structuredSnapshot.dateFieldCandidates.slice(0, 10),
+          radioCandidates: structuredSnapshot.radioCandidates.slice(0, 10),
+          checkboxCandidates: structuredSnapshot.checkboxCandidates.slice(0, 10),
+          selectLikeFieldCandidates: structuredSnapshot.selectLikeFieldCandidates.slice(0, 10),
           tableColumnCandidates: structuredSnapshot.tableColumnCandidates.slice(0, 15),
+          tableRowSamples: structuredSnapshot.tableRowSamples.slice(0, 5),
           formFieldCandidates: structuredSnapshot.formFieldCandidates.slice(0, 15),
           uncertainties: structuredSnapshot.uncertainties,
         });
@@ -699,6 +841,8 @@ export async function runStage1Discovery(
         '',
         '## 复核重点',
         '',
+        `- 本次探索深度：${resolveStage1ExplorationMode(request)}`,
+        '- 第一段草稿必须保持通用化，避免写死为单一业务场景',
         '- 请确认 menuPath、openButtonText、dialogTitle、submitButtonText',
         '- 请补齐 form.fields 的真实字段定义',
         '- 请补齐 assertions 与 cleanup 策略',
