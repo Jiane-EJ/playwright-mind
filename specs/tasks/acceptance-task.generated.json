@@ -1,0 +1,223 @@
+{
+  "taskId": "draft-stage1-auto-20260313170958",
+  "taskName": "第一段-自动生成探索建模请求-草稿",
+  "target": {
+    "url": "https://wyt-pf-test.fuioupay.com/",
+    "browser": "chromium",
+    "headless": false
+  },
+  "account": {
+    "username": "xwytlb001",
+    "password": "888888",
+    "loginHints": [
+      "用户名输入框可能显示为账号、用户名或登录名",
+      "密码输入框可能显示为密码",
+      "提交按钮可能显示为登录"
+    ]
+  },
+  "navigation": {
+    "homeReadyText": "首页",
+    "menuPath": [
+      "小区管理",
+      "小区信息管理"
+    ],
+    "menuHints": [
+      "菜单路径由第一段自动提取，请人工确认是否准确",
+      "菜单候选：收费概览",
+      "菜单候选：房屋收费",
+      "菜单候选：停车收费",
+      "菜单候选：账单催缴提醒催缴催缴记录催缴单生成记录催缴单模版配置",
+      "菜单候选：小区管理小区信息管理"
+    ]
+  },
+  "uiProfile": {
+    "tableRowSelectors": [
+      "table tbody tr",
+      ".el-table__body tr",
+      ".ant-table-tbody tr"
+    ],
+    "toastSelectors": [
+      ".el-message",
+      ".ant-message",
+      "[role=\"alert\"]"
+    ],
+    "dialogSelectors": [
+      "div[role=\"dialog\"]",
+      ".el-dialog__wrapper",
+      ".ant-modal-wrap"
+    ]
+  },
+  "form": {
+    "openButtonText": "新增小区",
+    "dialogTitle": "新增小区",
+    "submitButtonText": "确定",
+    "closeButtonText": "取消",
+    "notes": [
+      "成功登录系统,进入首页,找到小区管理菜单,点击子菜单小区信息管理,打开小区管理页面,找到新增小区,点击此按钮,录入弹框表单,录入完整后,点击提交按钮,提交新增小区,然后关闭弹框,刷新列表,搜索筛选刚新增的小区.",
+      "输出可人工复核的 draft.acceptance-task.json",
+      "当前结构化结果来自页面可见 DOM 提取，仅用于第一段草稿生成",
+      "进入第二段前必须人工复核按钮文案、字段映射与断言策略"
+    ],
+    "fields": [
+      {
+        "label": "小区名称 ",
+        "componentType": "input",
+        "value": "小区名称 _${NOW_YYYYMMDDHHMMSS}",
+        "required": false,
+        "unique": true,
+        "hints": [
+          "占位文案候选：请输入小区名称",
+          "由第一段自动提取，进入第二段前请人工复核"
+        ]
+      },
+      {
+        "label": "负责人 ",
+        "componentType": "input",
+        "value": "待人工确认",
+        "required": false,
+        "unique": false,
+        "hints": [
+          "占位文案候选：请输入负责人姓名",
+          "由第一段自动提取，进入第二段前请人工复核"
+        ]
+      },
+      {
+        "label": "小区名称",
+        "componentType": "input",
+        "value": "小区名称_${NOW_YYYYMMDDHHMMSS}",
+        "required": false,
+        "unique": true,
+        "hints": [
+          "占位文案候选：小区名称",
+          "由第一段自动提取，进入第二段前请人工复核"
+        ]
+      },
+      {
+        "label": "小区地址",
+        "componentType": "textarea",
+        "value": "待人工确认",
+        "required": false,
+        "unique": false,
+        "hints": [
+          "占位文案候选：小区地址",
+          "由第一段自动提取，进入第二段前请人工复核"
+        ]
+      },
+      {
+        "label": "省市区",
+        "componentType": "cascader",
+        "value": [
+          "待确认一级",
+          "待确认二级",
+          "待确认三级"
+        ],
+        "required": false,
+        "unique": false,
+        "hints": [
+          "占位文案候选：请选择省市区",
+          "由第一段自动提取，进入第二段前请人工复核"
+        ]
+      },
+      {
+        "label": "负责人",
+        "componentType": "input",
+        "value": "待人工确认",
+        "required": false,
+        "unique": false,
+        "hints": [
+          "占位文案候选：负责人姓名",
+          "由第一段自动提取，进入第二段前请人工复核"
+        ]
+      },
+      {
+        "label": "联系电话",
+        "componentType": "input",
+        "value": "待人工确认",
+        "required": false,
+        "unique": false,
+        "hints": [
+          "占位文案候选：负责人联系电话",
+          "由第一段自动提取，进入第二段前请人工复核"
+        ]
+      }
+    ]
+  },
+  "search": {
+    "inputLabel": "小区名称",
+    "keywordFromField": "小区名称 ",
+    "triggerButtonText": "搜索",
+    "resetButtonText": "重置",
+    "resultTableTitle": "批量导入业主信息",
+    "expectedColumns": [
+      "小区名称",
+      "所在地区",
+      "详细地址",
+      "负责人",
+      "联系电话",
+      "操作人",
+      "操作时间",
+      "所属商户号"
+    ],
+    "rowActionButtons": [
+      "详情",
+      "绑定电子码",
+      "绑定POS",
+      "编辑",
+      "删除"
+    ],
+    "notes": [
+      "搜索区字段由第一段自动识别，请人工确认"
+    ]
+  },
+  "assertions": [
+    {
+      "type": "table-row-exists",
+      "matchField": "小区名称 ",
+      "matchMode": "exact",
+      "timeoutMs": 10000,
+      "retryCount": 2
+    },
+    {
+      "type": "table-cell-equals",
+      "matchField": "小区名称 ",
+      "expectedColumns": [
+        "小区名称",
+        "所在地区",
+        "详细地址",
+        "负责人"
+      ],
+      "expectedColumnFromFields": {
+        "小区名称": "小区名称 ",
+        "所在地区": "小区地址",
+        "详细地址": "小区地址",
+        "负责人": "负责人 "
+      },
+      "retryCount": 2,
+      "soft": true
+    },
+    {
+      "type": "table-cell-contains",
+      "matchField": "小区名称 ",
+      "column": "所在地区",
+      "expectedFromField": "小区地址",
+      "retryCount": 2,
+      "soft": true
+    }
+  ],
+  "cleanup": {
+    "enabled": false,
+    "strategy": "none",
+    "notes": "第一段草稿默认不开启清理，请人工补充"
+  },
+  "approval": {
+    "approved": false,
+    "approvedBy": "manual-review",
+    "approvedAt": "2026-03-13T10:23:29.791Z"
+  },
+  "runtime": {
+    "stepTimeoutMs": 30000,
+    "pageTimeoutMs": 60000,
+    "screenshotOnStep": true,
+    "trace": true
+  }
+}

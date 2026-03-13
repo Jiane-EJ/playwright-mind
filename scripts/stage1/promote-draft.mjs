@@ -144,6 +144,14 @@ function readJsonFile(filePath) {
   }
 }
 
+function toRelativeDisplayPath(fullPath) {
+  const relativePath = path.relative(process.cwd(), fullPath);
+  if (!relativePath) {
+    return path.basename(fullPath);
+  }
+  return relativePath.split(path.sep).join('/');
+}
+
 function main() {
   const args = parseCliArgs(process.argv.slice(2));
   const stage1ResultDir = process.env.STAGE1_RESULT_DIR || DEFAULT_STAGE1_RESULT_DIR;
@@ -161,6 +169,7 @@ function main() {
   const draftTaskJson = readJsonFile(source.draftTaskPath);
   ensureParentDir(resolvedTargetFile);
   fs.writeFileSync(resolvedTargetFile, JSON.stringify(draftTaskJson, null, 2), 'utf-8');
+  const relativeTargetFile = toRelativeDisplayPath(resolvedTargetFile);
 
   const summary = [
     '第一段草稿任务提升完成',
@@ -168,7 +177,9 @@ function main() {
     `source.runDir=${source.runDir}`,
     `source.draftTask=${source.draftTaskPath}`,
     `target.taskFile=${resolvedTargetFile}`,
-    '建议：将 STAGE2_TASK_FILE 指向该文件后再执行第二段',
+    `target.taskFileRelative=${relativeTargetFile}`,
+    `建议：STAGE2_TASK_FILE=${relativeTargetFile}`,
+    '下一步：npm run stage2:run:headed',
   ].join('\n');
   console.log(summary);
 }

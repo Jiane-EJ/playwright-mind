@@ -155,6 +155,54 @@ function normalizeText(value: string): string {
   return value.replace(/\s+/g, '').trim();
 }
 
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+function toErrorStack(error: unknown): string | undefined {
+  if (error instanceof Error) {
+    return error.stack;
+  }
+  return undefined;
+}
+
+async function captureStepScreenshotSafely(
+  page: Page,
+  targetPath: string,
+): Promise<{ success: boolean; errorMessage?: string }> {
+  try {
+    await page.screenshot({ path: targetPath, fullPage: true });
+    return { success: true };
+  } catch (error) {
+    return {
+      success: false,
+      errorMessage: toErrorMessage(error),
+    };
+  }
+}
+
+const AUTO_PLACEHOLDER_PATTERNS: RegExp[] = [
+  /^待确认/,
+  /^待人工确认$/,
+  /^待补充$/,
+  /^待完善$/,
+  /^未确认$/,
+  /^占位$/,
+  /^todo$/i,
+  /^tbd$/i,
+];
+
+function isAutoPlaceholderValue(value: string): boolean {
+  const normalized = normalizeText(value);
+  if (normalized.length === 0) {
+    return true;
+  }
+  return AUTO_PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
 function isFieldValueEmpty(field: TaskField): boolean {
   if (Array.isArray(field.value)) {
     return field.value.length === 0;
@@ -333,6 +381,18 @@ function matchCascaderPath(actualValue: string, levels: string[]): boolean {
   const normalizedActualNoSlash = normalizedActual.replace(/\//g, '');
   const normalizedExpectedNoSlash = normalizedExpected.replace(/\//g, '');
   return normalizedActualNoSlash.includes(normalizedExpectedNoSlash);
+}
+
+function resolveCascaderExpectedLevels(levels: string[]): string[] {
+  return levels.filter((level) => !isAutoPlaceholderValue(level));
+}
+
+function matchCascaderPathWithAuto(actualValue: string, levels: string[]): boolean {
+  const expectedLevels = resolveCascaderExpectedLevels(levels);
+  if (expectedLevels.length === 0) {
+    return normalizeText(actualValue).length > 0;
+  }
+  return matchCascaderPath(actualValue, expectedLevels);
 }
 
 async function collectValidationMessages(
@@ -736,6 +796,35 @@ async function clickCascaderOption(
     '.ant-cascader-menu',
     '.ivu-cascader-menu',
   ];
+  if (isAutoPlaceholderValue(optionName)) {
+    for (let i = 0; i < panelSelectors.length; i += 1) {
+      const panels = runner.page.locator(panelSelectors[i]);
+      const panel = await getVisibleNth(panels, levelIndex);
+      if (!panel) {
+        continue;
+      }
+      const clicked = await tryClickLocator(
+        panel.locator(
+          '.el-cascader-node:not(.is-disabled), .ant-cascader-menu-item:not(.ant-cascader-menu-item-disabled), .ivu-cascader-menu-item:not(.ivu-cascader-menu-item-disabled), [role="menuitem"]:not([aria-disabled="true"]), li:not(.is-disabled):not(.disabled):not([aria-disabled="true"])',
+        ),
+      );
+      if (clicked) {
+        return;
+      }
+    }
+    const roleMenus = runner.page.locator('[role="menu"]');
+    const roleMenu = await getVisibleNth(roleMenus, levelIndex);
+    if (roleMenu) {
+      const clicked = await tryClickLocator(
+        roleMenu.locator('[role="menuitem"]:not([aria-disabled="true"])'),
+      );
+      if (clicked) {
+        return;
+      }
+    }
+    return;
+  }
+
   for (let i = 0; i < panelSelectors.length; i += 1) {
     const panels = runner.page.locator(panelSelectors[i]);
     const panel = await getVisibleNth(panels, levelIndex);
@@ -909,6 +998,7 @@ async function fillField(
   const hints = (field.hints || []).join('；');
   if (field.componentType === 'cascader' && Array.isArray(field.value)) {
     const levels = field.value.slice(0, 10);
+    const expectedLevels = resolveCascaderExpectedLevels(levels);
     if (levels.length === 0) {
       return;
     }
@@ -929,15 +1019,22 @@ async function fillField(
       }
       await runner.page.waitForTimeout(500);
       const actualValue = await readCascaderDisplayValue(field.label, task, runner.page);
-      if (matchCascaderPath(actualValue, levels)) {
+      if (matchCascaderPathWithAuto(actualValue, levels)) {
         return;
       }
       await runner.page.keyboard.press('Escape').catch(() => undefined);
       await runner.page.waitForTimeout(300);
     }
     const finalValue = await readCascaderDisplayValue(field.label, task, runner.page);
+    if (expectedLevels.length === 0) {
+      // 占位值场景无法稳定选中时不直接中断，交由后续提交流程做必填校验兜底。
+      return;
+    }
+    const expectedPath = expectedLevels.length > 0
+      ? expectedLevels.join('/')
+      : '自动选择当前层首个可用项';
     throw new Error(
-      `级联字段“${field.label}”未成功选中。期望路径=${levels.join(
+      `级联字段“${field.label}”未成功选中。期望路径=${expectedPath}；原始值=${levels.join(
         '/',
       )}；实际值=${finalValue || '空'}`,
     );
@@ -2398,26 +2495,42 @@ export async function runTaskScenario(
       if (task.runtime?.screenshotOnStep) {
         const shotFileName = `${String(steps.length + 1).padStart(2, '0')}_${sanitizeFileName(stepName)}.png`;
         const shotPath = path.join(screenshotDir, shotFileName);
-        await runner.page.screenshot({ path: shotPath, fullPage: true });
-        stepResult.screenshotPath = shotPath;
+        const shotResult = await captureStepScreenshotSafely(runner.page, shotPath);
+        if (shotResult.success) {
+          stepResult.screenshotPath = shotPath;
+        } else {
+          stepResult.message = `步骤截图失败：${shotResult.errorMessage || 'unknown'}`;
+        }
       }
     } catch (error) {
       stepResult.status = required ? 'failed' : 'skipped';
+      stepResult.message = toErrorMessage(error);
+      stepResult.errorStack = toErrorStack(error);
       const shotFileName = `${String(steps.length + 1).padStart(2, '0')}_${sanitizeFileName(stepName)}_failed.png`;
       const shotPath = path.join(screenshotDir, shotFileName);
-      await runner.page.screenshot({ path: shotPath, fullPage: true });
-      stepResult.screenshotPath = shotPath;
-      stepResult.message = error instanceof Error ? error.message : String(error);
-      stepResult.errorStack = error instanceof Error ? error.stack : undefined;
+      const shotResult = await captureStepScreenshotSafely(runner.page, shotPath);
+      if (shotResult.success) {
+        stepResult.screenshotPath = shotPath;
+      } else if (shotResult.errorMessage) {
+        stepResult.message = `${stepResult.message}；失败截图保存失败：${shotResult.errorMessage}`;
+      }
       const endedOnError = Date.now();
       stepResult.endedAt = new Date(endedOnError).toISOString();
       stepResult.durationMs = endedOnError - stepStartedAt;
       steps.push(stepResult);
-      writeProgress(true, required ? 'failed' : 'passed');
-      persistenceStore?.recordStep({
-        stepNo: steps.length,
-        stepResult,
-      });
+      try {
+        writeProgress(true, required ? 'failed' : 'passed');
+      } catch (_writeError) {
+        // ignore
+      }
+      try {
+        persistenceStore?.recordStep({
+          stepNo: steps.length,
+          stepResult,
+        });
+      } catch (_recordError) {
+        // ignore
+      }
       if (required) {
         throw error;
       }
@@ -2427,11 +2540,19 @@ export async function runTaskScenario(
     stepResult.endedAt = new Date(stepEndedAt).toISOString();
     stepResult.durationMs = stepEndedAt - stepStartedAt;
     steps.push(stepResult);
-    writeProgress(true, 'passed');
-    persistenceStore?.recordStep({
-      stepNo: steps.length,
-      stepResult,
-    });
+    try {
+      writeProgress(true, 'passed');
+    } catch (_writeError) {
+      // ignore
+    }
+    try {
+      persistenceStore?.recordStep({
+        stepNo: steps.length,
+        stepResult,
+      });
+    } catch (_recordError) {
+      // ignore
+    }
   };
 
   let finalStatus: 'passed' | 'failed' = 'passed';
@@ -2629,8 +2750,46 @@ export async function runTaskScenario(
         { required: task.cleanup.failOnError === true },
       );
     }
-  } catch (_error) {
+  } catch (error) {
     finalStatus = 'failed';
+    const hasFailedStep = steps.some((item) => item.status === 'failed');
+    if (!hasFailedStep) {
+      const nowIso = new Date().toISOString();
+      const fatalStep: StepResult = {
+        name: '系统异常_未归档步骤',
+        status: 'failed',
+        startedAt: nowIso,
+        endedAt: nowIso,
+        durationMs: 0,
+        message: toErrorMessage(error),
+        errorStack: toErrorStack(error),
+      };
+      const shotFileName = `${String(steps.length + 1).padStart(2, '0')}_fatal_error_failed.png`;
+      const shotPath = path.join(screenshotDir, shotFileName);
+      const shotResult = await captureStepScreenshotSafely(runner.page, shotPath);
+      if (shotResult.success) {
+        fatalStep.screenshotPath = shotPath;
+      } else if (shotResult.errorMessage) {
+        fatalStep.message = `${fatalStep.message}；失败截图保存失败：${shotResult.errorMessage}`;
+      }
+      steps.push(fatalStep);
+      querySnapshots.__fatalError = fatalStep.message;
+      try {
+        writeProgress(true, 'failed');
+      } catch (_writeError) {
+        // ignore
+      }
+      try {
+        persistenceStore?.recordStep({
+          stepNo: steps.length,
+          stepResult: fatalStep,
+        });
+      } catch (_recordError) {
+        // ignore
+      }
+    } else {
+      querySnapshots.__fatalError = toErrorMessage(error);
+    }
   }
 
   const ended = Date.now();

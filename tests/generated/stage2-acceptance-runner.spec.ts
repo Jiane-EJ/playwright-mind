@@ -26,9 +26,15 @@ test.describe('stage2 acceptance runner', () => {
 
     if (result.status !== 'passed') {
       const failedStep = [...result.steps].reverse().find((item) => item.status === 'failed');
+      const lastStep = result.steps[result.steps.length - 1];
+      const fatalError = typeof result.querySnapshots.__fatalError === 'string'
+        ? result.querySnapshots.__fatalError
+        : '';
       const detail = failedStep
         ? `step=${failedStep.name}; message=${failedStep.message || 'unknown'}; screenshot=${failedStep.screenshotPath || 'n/a'}`
-        : 'no step detail';
+        : lastStep
+          ? `lastStep=${lastStep.name}; lastStatus=${lastStep.status}; fatal=${fatalError || 'unknown'}`
+          : `fatal=${fatalError || 'no step detail'}`;
       throw new Error(
         `第二段执行失败: ${detail}; resultFile=${result.runDir}\\result.json`,
       );

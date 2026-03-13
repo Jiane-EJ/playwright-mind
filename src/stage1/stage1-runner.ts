@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import type { Locator, Page } from '@playwright/test';
+import type { Frame, Locator, Page } from '@playwright/test';
 import type { PlayWrightAiFixtureType } from '@midscene/web/playwright';
 import { resolveRuntimePath, stage1ResultDir } from '../../config/runtime-path';
 import { createStage1PersistenceStore } from '../persistence/stage1-store';
@@ -9,6 +9,7 @@ import { loadStage1Request, resolveStage1RequestFilePath } from './request-loade
 import { generateStage2DraftTask } from './task-draft-generator';
 import type {
   Stage1DiscoveryResult,
+  Stage1Request,
   Stage1StructuredSnapshot,
   Stage1StepResult,
 } from './types';
@@ -45,6 +46,10 @@ const CAPTCHA_SELECTOR_PATTERNS = [
   '.nc_scale',
   '[id^="nc_"][id$="_wrapper"]',
   '[class*="captcha"]',
+  'iframe[src*="captcha"]',
+  'iframe[src*="nocaptcha"]',
+  'iframe[id*="captcha"]',
+  'iframe[id*="nc_"]',
 ];
 
 type CaptchaMode =
@@ -157,6 +162,10 @@ function writeJsonFile(targetPath: string, payload: unknown): void {
   fs.writeFileSync(targetPath, JSON.stringify(payload, null, 2), 'utf-8');
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 async function waitVisibleByText(
   page: Page,
   text: string,
@@ -173,6 +182,51 @@ async function waitVisibleByText(
   }
 }
 
+async function clickFirstVisible(locator: Locator): Promise<boolean> {
+  try {
+    const count = await locator.count();
+    for (let i = 0; i < count; i += 1) {
+      const item = locator.nth(i);
+      if (!(await item.isVisible())) {
+        continue;
+      }
+      await item.click({ timeout: 5000 });
+      return true;
+    }
+  } catch (_error) {
+    return false;
+  }
+  return false;
+}
+
+async function clickMenuWithFallback(
+  menuName: string,
+  runner: RunnerContext,
+): Promise<void> {
+  const escaped = escapeRegExp(menuName);
+  const page = runner.page;
+  const clicked = await clickFirstVisible(
+    page.locator('.el-menu-item, .el-submenu__title, .ant-menu-item, .ant-menu-submenu-title')
+      .filter({ hasText: menuName }),
+  ) || await clickFirstVisible(
+    page.getByRole('menuitem', { name: new RegExp(escaped) }),
+  ) || await clickFirstVisible(
+    page.getByRole('link', { name: new RegExp(escaped) }),
+  ) || await clickFirstVisible(
+    page.getByText(menuName, { exact: false }),
+  );
+
+  if (!clicked) {
+    await runner.ai(`在当前页面点击菜单“${menuName}”`);
+  }
+  await page.waitForTimeout(800);
+}
+
+function shouldOpenCreateEntryForExploration(request: Stage1Request): boolean {
+  const description = request.goal?.scenarioDescription || '';
+  return /新增|新建|添加|录入/.test(description);
+}
+
 async function isLocatorVisible(locator: Locator): Promise<boolean> {
   try {
     const count = await locator.count();
@@ -187,20 +241,53 @@ async function isLocatorVisible(locator: Locator): Promise<boolean> {
   return false;
 }
 
+async function isLoginFormStillVisible(page: Page): Promise<boolean> {
+  const passwordVisible = await isLocatorVisible(
+    page.locator('input[type="password"], input[placeholder*="密码"]'),
+  );
+  const accountVisible = await isLocatorVisible(
+    page.locator(
+      'input[placeholder*="账号"], input[placeholder*="用户名"], input[placeholder*="登录名"]',
+    ),
+  );
+  const loginButtonVisible = await isLocatorVisible(
+    page.locator(
+      'button:has-text("登录"), .el-button:has-text("登录"), .ant-btn:has-text("登录"), [type="submit"]',
+    ),
+  );
+  return passwordVisible && (accountVisible || loginButtonVisible);
+}
+
 async function detectCaptchaChallenge(page: Page): Promise<boolean> {
-  for (let i = 0; i < CAPTCHA_TEXT_PATTERNS.length; i += 1) {
-    const pattern = CAPTCHA_TEXT_PATTERNS[i];
-    if (
-      await isLocatorVisible(
-        page.getByText(pattern, { exact: false }).first(),
-      )
-    ) {
-      return true;
+  const detectInFrame = async (frame: Frame): Promise<boolean> => {
+    for (let i = 0; i < CAPTCHA_TEXT_PATTERNS.length; i += 1) {
+      const pattern = CAPTCHA_TEXT_PATTERNS[i];
+      if (
+        await isLocatorVisible(
+          frame.getByText(pattern, { exact: false }).first(),
+        )
+      ) {
+        return true;
+      }
     }
+    for (let i = 0; i < CAPTCHA_SELECTOR_PATTERNS.length; i += 1) {
+      const selector = CAPTCHA_SELECTOR_PATTERNS[i];
+      if (await isLocatorVisible(frame.locator(selector))) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  if (await detectInFrame(page.mainFrame())) {
+    return true;
   }
-  for (let i = 0; i < CAPTCHA_SELECTOR_PATTERNS.length; i += 1) {
-    const selector = CAPTCHA_SELECTOR_PATTERNS[i];
-    if (await isLocatorVisible(page.locator(selector))) {
+  const frames = page.frames();
+  for (let i = 0; i < frames.length; i += 1) {
+    if (frames[i] === page.mainFrame()) {
+      continue;
+    }
+    if (await detectInFrame(frames[i])) {
       return true;
     }
   }
@@ -318,7 +405,17 @@ async function handleCaptchaChallengeIfNeeded(
   if (mode === CAPTCHA_MODE_IGNORE) {
     return;
   }
-  const found = await detectCaptchaChallenge(runner.page);
+  let found = await detectCaptchaChallenge(runner.page);
+  if (!found) {
+    const detectDeadline = Date.now() + 5000;
+    while (Date.now() < detectDeadline) {
+      await runner.page.waitForTimeout(500);
+      found = await detectCaptchaChallenge(runner.page);
+      if (found) {
+        break;
+      }
+    }
+  }
   if (!found) {
     return;
   }
@@ -503,8 +600,43 @@ export async function runStage1Discovery(
     });
 
     await runStep('处理登录安全验证', async () => {
+      const loginUrlBeforeCaptcha = runner.page.url();
       await handleCaptchaChallengeIfNeeded(runner);
+      const captchaStillFound = await detectCaptchaChallenge(runner.page);
+      if (captchaStillFound) {
+        throw new Error('安全验证处理后仍检测到验证码弹窗');
+      }
+      const loginFormStillVisible = await isLoginFormStillVisible(runner.page);
+      const loginUrlUnchanged = runner.page.url() === loginUrlBeforeCaptcha;
+      if (loginFormStillVisible && loginUrlUnchanged) {
+        throw new Error('安全验证弹窗已关闭，但页面仍停留在登录态，疑似未通过验证码');
+      }
     });
+
+    const menuPathHints = request.scope?.menuPathHints || [];
+    for (let i = 0; i < menuPathHints.length; i += 1) {
+      const menuName = menuPathHints[i];
+      await runStep(
+        `导航菜单_${menuName}`,
+        async () => {
+          await clickMenuWithFallback(menuName, runner);
+        },
+        { required: false },
+      );
+    }
+
+    await runStep(
+      '尝试打开新增入口用于探索',
+      async () => {
+        if (!shouldOpenCreateEntryForExploration(request)) {
+          return;
+        }
+        await runner.ai(
+          '在当前页面尝试点击“新增”或“添加”入口，仅用于探索元素；如果出现弹窗，请保持弹窗打开，不要提交。',
+        );
+      },
+      { required: false },
+    );
 
     await runStep(
       '等待页面进入可探索状态',

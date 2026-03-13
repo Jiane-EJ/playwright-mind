@@ -193,6 +193,8 @@ npm run stage1:run:headed
 ```
 
 第一段登录验证码处理由 `STAGE1_CAPTCHA_MODE` 控制（默认 `auto`）。
+验证码处理后会校验是否已离开登录态；若验证码弹窗关闭但仍停留登录页，会直接判定失败，避免假成功。
+第一段会按 `scope.menuPathHints` 尝试导航到目标菜单，并尝试打开“新增/添加”入口做探索；但不会提交新增数据。
 
 执行后将生成：
 
@@ -225,6 +227,7 @@ npm run stage1:promote
 * 指定请求：`npm run stage1:promote -- --requestId your_request_id`
 * 指定运行目录：`npm run stage1:promote -- --runDir t_runtime/stage1-results/<requestId>/<timestamp>`
 * 指定目标文件：`npm run stage1:promote -- --target specs/tasks/your-task.json --force`
+* 命令输出会打印 `target.taskFileRelative` 与 `建议：STAGE2_TASK_FILE=...`，直接复制到 `.env` 即可
 
 3. 将 `.env` 中 `STAGE2_TASK_FILE` 指向目标任务文件后执行第二段：
 
@@ -268,6 +271,8 @@ npm run stage2:run:headed
 * `assertions[].matchMode`：行匹配模式（`exact` / `contains`）
 * `cleanup.rowMatchMode`：清理时行匹配模式（建议 `exact`）
 * `cleanup.verifyAfterCleanup`：删除后是否强制校验目标行消失（建议 `true`）
+* `form.fields[].componentType=cascader` 且值为占位文案（如“待确认一级”）时：第二段会自动选择当前层首个可用选项，避免因占位值导致执行中断
+* 第二段异常归档增强：即使发生步骤外异常，也会补充 `系统异常_未归档步骤`，避免报告仅显示 `no step detail`
 
 ## 当前状态
 
