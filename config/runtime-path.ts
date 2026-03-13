@@ -35,6 +35,11 @@ export const acceptanceResultDir = readEnv(
   `${runtimeDirPrefix}acceptance-results`,
 );
 
+export const stage1ResultDir = readEnv(
+  'STAGE1_RESULT_DIR',
+  `${runtimeDirPrefix}stage1-results`,
+);
+
 export function resolveRuntimePath(targetDir: string): string {
   return path.resolve(process.cwd(), targetDir);
 }

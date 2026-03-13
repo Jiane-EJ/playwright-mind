@@ -1,0 +1,44 @@
+{
+  "requestId": "stage1-community-create-001",
+  "requestName": "第一段-物业平台新增小区探索建模",
+  "target": {
+    "url": "https://wyt-pf-test.fuioupay.com/",
+    "browser": "chromium",
+    "headless": false
+  },
+  "account": {
+    "username": "xwytlb001",
+    "password": "888888",
+    "loginHints": [
+      "登录页存在账号和密码输入框",
+      "登录按钮文案通常为登录"
+    ]
+  },
+  "goal": {
+    "scenarioDescription": "探索小区信息管理页面新增小区流程，生成第二段可复核任务草稿",
+    "expectedOutcome": "产出 draft.acceptance-task.json 并附带人工复核说明"
+  },
+  "scope": {
+    "menuPathHints": [
+      "小区管理",
+      "小区信息管理"
+    ],
+    "mustExploreAreas": [
+      "小区信息管理",
+      "新增小区",
+      "搜索"
+    ],
+    "skipAreas": [
+      "与小区新增无关菜单"
+    ]
+  },
+  "review": {
+    "required": true,
+    "reviewer": "manual-review"
+  },
+  "runtime": {
+    "stepTimeoutMs": 30000,
+    "pageTimeoutMs": 60000,
+    "screenshotOnStep": true
+  }
+}

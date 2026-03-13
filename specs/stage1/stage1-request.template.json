@@ -1,0 +1,45 @@
+{
+  "requestId": "replace-with-request-id",
+  "requestName": "replace-with-request-name",
+  "target": {
+    "url": "https://example.com/",
+    "browser": "chromium",
+    "headless": false
+  },
+  "account": {
+    "username": "${TEST_USERNAME}",
+    "password": "${TEST_PASSWORD}",
+    "loginHints": [
+      "用户名输入框可能显示为账号、用户名或登录名",
+      "密码输入框可能显示为密码",
+      "提交按钮可能显示为登录"
+    ]
+  },
+  "goal": {
+    "scenarioDescription": "从首页进入目标业务页面，探索新增流程所需元素，并生成第二段任务草稿",
+    "expectedOutcome": "输出可人工复核的 draft.acceptance-task.json"
+  },
+  "scope": {
+    "menuPathHints": [
+      "一级菜单名称",
+      "二级菜单名称"
+    ],
+    "mustExploreAreas": [
+      "首页",
+      "列表",
+      "新增"
+    ],
+    "skipAreas": [
+      "与本场景无关菜单"
+    ]
+  },
+  "review": {
+    "required": true,
+    "reviewer": "qa-owner"
+  },
+  "runtime": {
+    "stepTimeoutMs": 30000,
+    "pageTimeoutMs": 60000,
+    "screenshotOnStep": true
+  }
+}

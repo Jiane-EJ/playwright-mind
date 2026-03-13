@@ -45,8 +45,10 @@ PLAYWRIGHT_OUTPUT_DIR=t_runtime/test-results
 PLAYWRIGHT_HTML_REPORT_DIR=t_runtime/playwright-report
 MIDSCENE_RUN_DIR=t_runtime/midscene_run
 ACCEPTANCE_RESULT_DIR=t_runtime/acceptance-results
+STAGE1_RESULT_DIR=t_runtime/stage1-results
 DB_DRIVER=sqlite
 DB_FILE_PATH=t_runtime/db/hi_test.sqlite
+STAGE1_REQUEST_FILE=specs/stage1/stage1-request.community-create.example.json
 STAGE2_TASK_FILE=specs/tasks/acceptance-task.community-create.example.json
 STAGE2_REQUIRE_APPROVAL=false
 STAGE2_CAPTCHA_MODE=auto
@@ -80,6 +82,7 @@ STAGE2_CAPTCHA_WAIT_TIMEOUT_MS=120000
 * `PLAYWRIGHT_OUTPUT_DIR`：Playwright 执行产物目录
 * `PLAYWRIGHT_HTML_REPORT_DIR`：Playwright HTML 报告目录
 * `MIDSCENE_RUN_DIR`：Midscene 运行日志、缓存、报告根目录
+* `STAGE1_RESULT_DIR`：第一段探索建模结果目录（`stage1-result.json`、`structured-snapshot.json`、`mapping-report.json`、草稿任务、复核说明）
 * `ACCEPTANCE_RESULT_DIR`：第二段结构化结果目录（`result.json`、步骤截图）
 * `DB_FILE_PATH`：本地数据库文件目录（默认 `t_runtime/db/hi_test.sqlite`）
 
@@ -91,6 +94,7 @@ STAGE2_CAPTCHA_WAIT_TIMEOUT_MS=120000
 * `t_runtime/midscene_run/dump`
 * `t_runtime/midscene_run/tmp`
 * `t_runtime/midscene_run/cache`
+* `t_runtime/stage1-results/`
 * `t_runtime/acceptance-results/`
 * `t_runtime/db/hi_test.sqlite`
 
@@ -131,8 +135,9 @@ npm run db:migrate
 
 ## 测试入口
 
-当前测试目录仅保留第二段执行器相关文件：
+当前测试目录包含第一段和第二段执行入口：
 
+* `tests/generated/stage1-discovery-runner.spec.ts`：第一段探索建模入口（请求 JSON -> 草稿任务）
 * `tests/generated/stage2-acceptance-runner.spec.ts`：第二段 JSON 任务执行入口
 * `tests/fixture/fixture.ts`：Midscene + Playwright 公共夹具
 
@@ -161,6 +166,52 @@ npx playwright test --headed tests/generated/stage2-acceptance-runner.spec.ts
 
 * Playwright HTML 报告目录：`t_runtime/playwright-report/`
 * Midscene 报告目录：`t_runtime/midscene_run/report/`
+
+## 运行第一段（探索建模草稿）
+
+默认读取 `STAGE1_REQUEST_FILE` 指向的请求文件并执行。
+
+```shell
+npm run stage1:run:headed
+```
+
+执行后将生成：
+
+* 第一段结果：`t_runtime/stage1-results/<requestId>/<timestamp>/stage1-result.json`
+* 第一段过程快照：`t_runtime/stage1-results/<requestId>/<timestamp>/stage1-result.partial.json`
+* 第一段探索证据：`t_runtime/stage1-results/<requestId>/<timestamp>/evidence/`
+* 第一段结构化快照：`t_runtime/stage1-results/<requestId>/<timestamp>/evidence/structured-snapshot.json`
+* 第一段字段映射报告：`t_runtime/stage1-results/<requestId>/<timestamp>/evidence/mapping-report.json`
+* 第二段草稿任务：`t_runtime/stage1-results/<requestId>/<timestamp>/draft.acceptance-task.json`
+* 人工复核说明：`t_runtime/stage1-results/<requestId>/<timestamp>/review-notes.md`
+
+## 第一段到第二段交接（Day7 最小联调）
+
+第一段输出草稿后，推荐按以下最小流程交接到第二段：
+
+1. 运行第一段生成草稿任务：
+
+```shell
+npm run stage1:run:headed
+```
+
+2. 将最新草稿提升为第二段任务文件（默认写入 `specs/tasks/acceptance-task.generated.json`）：
+
+```shell
+npm run stage1:promote
+```
+
+可选参数：
+
+* 指定请求：`npm run stage1:promote -- --requestId your_request_id`
+* 指定运行目录：`npm run stage1:promote -- --runDir t_runtime/stage1-results/<requestId>/<timestamp>`
+* 指定目标文件：`npm run stage1:promote -- --target specs/tasks/your-task.json --force`
+
+3. 将 `.env` 中 `STAGE2_TASK_FILE` 指向目标任务文件后执行第二段：
+
+```shell
+npm run stage2:run:headed
+```
 
 ## 运行第二段（任务 JSON 执行）
 
@@ -207,6 +258,11 @@ npm run stage2:run:headed
 | Midscene + Playwright 基础样例 | 已完成 | 可运行示例脚本 |
 | AI 自主代理验收系统改造方案 | 已完成文档 | 见 `.tasks/AI自主代理验收系统开发改造方案_2026-03-11.md` |
 | 第一段完整开发计划 | 已完成文档 | 见 `.plans/第一段探索建模最小改动开发方案_2026-03-13.md` 与 `.tasks/第一段探索建模每日开发计划_2026-03-13.md` |
+| 第一段最小入口骨架 | 已完成基础代码 | 已新增 `src/stage1` 最小执行器与 `tests/generated/stage1-discovery-runner.spec.ts` |
+| 第一段结构化探索摘要 | 已完成基础代码 | 已支持 DOM 结构化提取并输出 `structured-snapshot.json` |
+| 第一段字段映射策略 | 已完成基础代码 | 已支持列-字段自动映射并输出 `mapping-report.json` |
+| 第一段数据持久化（Day6） | 已完成代码接入 | 已接入第一段运行、步骤、快照、附件路径写库 |
+| 第一段到第二段交接联调（Day7） | 进行中 | 已新增草稿提升脚本，待命令级联调验证 |
 | 任务输入 JSON 模板 | 已完成模板 | 见 `specs/tasks/` |
 | 第二段最小执行器（JSON 驱动） | 已完成 | 入口 `tests/generated/stage2-acceptance-runner.spec.ts` |
 | 第二段数据持久化 | 已完成代码接入 | 已接入运行、步骤、快照、附件路径写库 |
