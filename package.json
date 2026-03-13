@@ -8,6 +8,7 @@
     "db:migrate": "node --experimental-sqlite scripts/db/migrate.mjs",
     "stage1:run": "playwright test tests/generated/stage1-discovery-runner.spec.ts --project=chromium",
     "stage1:run:headed": "playwright test tests/generated/stage1-discovery-runner.spec.ts --project=chromium --headed",
+    "stage1:generate-request": "node scripts/stage1/generate-request.mjs",
     "stage1:promote": "node scripts/stage1/promote-draft.mjs",
     "stage2:run": "playwright test tests/generated/stage2-acceptance-runner.spec.ts --project=chromium",
     "stage2:run:headed": "playwright test tests/generated/stage2-acceptance-runner.spec.ts --project=chromium --headed"

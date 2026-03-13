@@ -49,6 +49,7 @@ STAGE1_RESULT_DIR=t_runtime/stage1-results
 DB_DRIVER=sqlite
 DB_FILE_PATH=t_runtime/db/hi_test.sqlite
 STAGE1_REQUEST_FILE=specs/stage1/stage1-request.community-create.example.json
+STAGE1_BRIEF_FILE=specs/stage1/stage1-brief.txt
 STAGE2_TASK_FILE=specs/tasks/acceptance-task.community-create.example.json
 STAGE2_REQUIRE_APPROVAL=false
 STAGE2_CAPTCHA_MODE=auto
@@ -171,6 +172,20 @@ npx playwright test --headed tests/generated/stage2-acceptance-runner.spec.ts
 
 默认读取 `STAGE1_REQUEST_FILE` 指向的请求文件并执行。
 
+如果你不想手写 `stage1-request.json`，推荐固定编辑 `STAGE1_BRIEF_FILE` 指向的文件（默认 `specs/stage1/stage1-brief.txt`），然后执行：
+
+```shell
+npm run stage1:generate-request -- --force
+```
+
+如需临时指定输入文件，也支持：
+
+```shell
+npm run stage1:generate-request -- --file specs/stage1/your-brief.txt --output specs/stage1/stage1-request.generated.json --force
+```
+
+生成后，将 `.env` 中 `STAGE1_REQUEST_FILE` 指向生成文件，再执行第一段：
+
 ```shell
 npm run stage1:run:headed
 ```
@@ -262,6 +277,7 @@ npm run stage2:run:headed
 | 第一段结构化探索摘要 | 已完成基础代码 | 已支持 DOM 结构化提取并输出 `structured-snapshot.json` |
 | 第一段字段映射策略 | 已完成基础代码 | 已支持列-字段自动映射并输出 `mapping-report.json` |
 | 第一段数据持久化（Day6） | 已完成代码接入 | 已接入第一段运行、步骤、快照、附件路径写库 |
+| 第一段自然语言请求转 JSON | 已完成基础代码 | 已支持固定 brief 文件（默认 `specs/stage1/stage1-brief.txt`）及文本/HTML 生成 `stage1-request.generated.json` |
 | 第一段到第二段交接联调（Day7） | 进行中 | 已新增草稿提升脚本，待命令级联调验证 |
 | 任务输入 JSON 模板 | 已完成模板 | 见 `specs/tasks/` |
 | 第二段最小执行器（JSON 驱动） | 已完成 | 入口 `tests/generated/stage2-acceptance-runner.spec.ts` |
