@@ -50,19 +50,21 @@ DB_DRIVER=sqlite
 DB_FILE_PATH=t_runtime/db/hi_test.sqlite
 STAGE1_REQUEST_FILE=specs/stage1/stage1-request.community-create.example.json
 STAGE1_BRIEF_FILE=specs/stage1/stage1-brief.txt
+STAGE1_CAPTCHA_MODE=auto
+STAGE1_CAPTCHA_WAIT_TIMEOUT_MS=120000
 STAGE2_TASK_FILE=specs/tasks/acceptance-task.community-create.example.json
 STAGE2_REQUIRE_APPROVAL=false
 STAGE2_CAPTCHA_MODE=auto
 STAGE2_CAPTCHA_WAIT_TIMEOUT_MS=120000
 ```
 
-`STAGE2_CAPTCHA_MODE` 说明：
+验证码模式说明（`STAGE1_CAPTCHA_MODE` / `STAGE2_CAPTCHA_MODE`）：
 * `auto`：**AI 自动处理滑块**（默认）。使用 Midscene AI 分析截图获取滑块位置，Playwright 模拟真人拖动轨迹
 * `manual`：检测到滑块/安全验证后，等待人工完成，再继续执行
 * `fail`：检测到滑块/安全验证立即失败
 * `ignore`：忽略滑块检测（不建议）
 
-`STAGE2_CAPTCHA_WAIT_TIMEOUT_MS`：`manual` 模式下人工处理等待时长（毫秒）。
+`STAGE1_CAPTCHA_WAIT_TIMEOUT_MS` / `STAGE2_CAPTCHA_WAIT_TIMEOUT_MS`：`manual` 模式下人工处理等待时长（毫秒）。
 
 ### 滑块验证码自动处理
 
@@ -190,6 +192,8 @@ npm run stage1:generate-request -- --file specs/stage1/your-brief.txt --output s
 npm run stage1:run:headed
 ```
 
+第一段登录验证码处理由 `STAGE1_CAPTCHA_MODE` 控制（默认 `auto`）。
+
 执行后将生成：
 
 * 第一段结果：`t_runtime/stage1-results/<requestId>/<timestamp>/stage1-result.json`
@@ -278,6 +282,7 @@ npm run stage2:run:headed
 | 第一段字段映射策略 | 已完成基础代码 | 已支持列-字段自动映射并输出 `mapping-report.json` |
 | 第一段数据持久化（Day6） | 已完成代码接入 | 已接入第一段运行、步骤、快照、附件路径写库 |
 | 第一段自然语言请求转 JSON | 已完成基础代码 | 已支持固定 brief 文件（默认 `specs/stage1/stage1-brief.txt`）及文本/HTML 生成 `stage1-request.generated.json` |
+| 第一段登录验证码处理 | 已完成代码接入 | 已支持 `STAGE1_CAPTCHA_MODE` 自动/人工/失败/忽略策略 |
 | 第一段到第二段交接联调（Day7） | 进行中 | 已新增草稿提升脚本，待命令级联调验证 |
 | 任务输入 JSON 模板 | 已完成模板 | 见 `specs/tasks/` |
 | 第二段最小执行器（JSON 驱动） | 已完成 | 入口 `tests/generated/stage2-acceptance-runner.spec.ts` |
